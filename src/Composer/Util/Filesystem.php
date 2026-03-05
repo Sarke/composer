@@ -291,7 +291,7 @@ class Filesystem
         if (!$unlinked) {
             // retry after a bit on windows since it tends to be touchy with mass removals
             if (Platform::isWindows() || Platform::getEnv('COMPOSER_RUNTIME_ENV') === 'virtualbox') {
-                usleep(350000);
+                usleep(1350000);
                 $unlinked = @$this->unlinkImplementation($path);
             }
 
