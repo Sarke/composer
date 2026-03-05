@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -12,6 +12,8 @@
 
 namespace Composer\DependencyResolver;
 
+use Composer\Advisory\PartialSecurityAdvisory;
+use Composer\Advisory\SecurityAdvisory;
 use Composer\Package\BasePackage;
 use Composer\Package\Version\VersionParser;
 use Composer\Semver\CompilingMatcher;
@@ -27,46 +29,53 @@ use Composer\Semver\Constraint\Constraint;
 class Pool implements \Countable
 {
     /** @var BasePackage[] */
-    protected $packages = array();
+    protected $packages = [];
     /** @var array<string, BasePackage[]> */
-    protected $packageByName = array();
+    protected $packageByName = [];
     /** @var VersionParser */
     protected $versionParser;
     /** @var array<string, array<string, BasePackage[]>> */
-    protected $providerCache = array();
+    protected $providerCache = [];
     /** @var BasePackage[] */
     protected $unacceptableFixedOrLockedPackages;
     /** @var array<string, array<string, string>> Map of package name => normalized version => pretty version */
-    protected $removedVersions = array();
+    protected $removedVersions = [];
     /** @var array<string, array<string, string>> Map of package object hash => removed normalized versions => removed pretty version */
-    protected $removedVersionsByPackage = array();
+    protected $removedVersionsByPackage = [];
+    /** @var array<string, array<string, array<SecurityAdvisory|PartialSecurityAdvisory>>> Map of package name => normalized version => security advisories */
+    private $securityRemovedVersions = [];
+    /** @var array<string, array<string, string>> Map of package name => normalized version => pretty version */
+    private $abandonedRemovedVersions = [];
 
     /**
      * @param BasePackage[] $packages
      * @param BasePackage[] $unacceptableFixedOrLockedPackages
      * @param array<string, array<string, string>> $removedVersions
      * @param array<string, array<string, string>> $removedVersionsByPackage
+     * @param array<string, array<string, array<SecurityAdvisory|PartialSecurityAdvisory>>> $securityRemovedVersions
+     * @param array<string, array<string, string>> $abandonedRemovedVersions
      */
-    public function __construct(array $packages = array(), array $unacceptableFixedOrLockedPackages = array(), array $removedVersions = array(), array $removedVersionsByPackage = array())
+    public function __construct(array $packages = [], array $unacceptableFixedOrLockedPackages = [], array $removedVersions = [], array $removedVersionsByPackage = [], array $securityRemovedVersions = [], array $abandonedRemovedVersions = [])
     {
         $this->versionParser = new VersionParser;
         $this->setPackages($packages);
         $this->unacceptableFixedOrLockedPackages = $unacceptableFixedOrLockedPackages;
         $this->removedVersions = $removedVersions;
         $this->removedVersionsByPackage = $removedVersionsByPackage;
+        $this->securityRemovedVersions = $securityRemovedVersions;
+        $this->abandonedRemovedVersions = $abandonedRemovedVersions;
     }
 
     /**
-     * @param  string $name
      * @return array<string, string>
      */
-    public function getRemovedVersions($name, ConstraintInterface $constraint)
+    public function getRemovedVersions(string $name, ConstraintInterface $constraint): array
     {
         if (!isset($this->removedVersions[$name])) {
-            return array();
+            return [];
         }
 
-        $result = array();
+        $result = [];
         foreach ($this->removedVersions[$name] as $version => $prettyVersion) {
             if ($constraint->matches(new Constraint('==', $version))) {
                 $result[$version] = $prettyVersion;
@@ -77,23 +86,91 @@ class Pool implements \Countable
     }
 
     /**
-     * @param  string $objectHash
+     * @return array<string, array<string, string>>
+     */
+    public function getAllRemovedVersions(): array
+    {
+        return $this->removedVersions;
+    }
+
+    /**
      * @return array<string, string>
      */
-    public function getRemovedVersionsByPackage($objectHash)
+    public function getRemovedVersionsByPackage(string $objectHash): array
     {
         if (!isset($this->removedVersionsByPackage[$objectHash])) {
-            return array();
+            return [];
         }
 
         return $this->removedVersionsByPackage[$objectHash];
     }
 
     /**
-     * @param BasePackage[] $packages
-     * @return void
+     * @return array<string, array<string, string>>
      */
-    private function setPackages(array $packages)
+    public function getAllRemovedVersionsByPackage(): array
+    {
+        return $this->removedVersionsByPackage;
+    }
+
+    public function isSecurityRemovedPackageVersion(string $packageName, ?ConstraintInterface $constraint): bool
+    {
+        foreach ($this->securityRemovedVersions[$packageName] ?? [] as $version => $packageWithSecurityAdvisories) {
+            if ($constraint !== null && $constraint->matches(new Constraint('==', $version))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return string[]
+     */
+    public function getSecurityAdvisoryIdentifiersForPackageVersion(string $packageName, ?ConstraintInterface $constraint): array
+    {
+        foreach ($this->securityRemovedVersions[$packageName] ?? [] as $version => $packageWithSecurityAdvisories) {
+            if ($constraint !== null && $constraint->matches(new Constraint('==', $version))) {
+                return array_map(static function ($advisory) {
+                    return $advisory->advisoryId;
+                }, $packageWithSecurityAdvisories);
+            }
+        }
+
+        return [];
+    }
+
+    public function isAbandonedRemovedPackageVersion(string $packageName, ?ConstraintInterface $constraint): bool
+    {
+        foreach ($this->abandonedRemovedVersions[$packageName] ?? [] as $version => $prettyVersion) {
+            if ($constraint !== null && $constraint->matches(new Constraint('==', $version))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array<string, array<string, array<SecurityAdvisory|PartialSecurityAdvisory>>>
+     */
+    public function getAllSecurityRemovedPackageVersions(): array
+    {
+        return $this->securityRemovedVersions;
+    }
+
+    /**
+     * @return array<string, array<string, string>>
+     */
+    public function getAllAbandonedRemovedPackageVersions(): array
+    {
+        return $this->abandonedRemovedVersions;
+    }
+
+    /**
+     * @param BasePackage[] $packages
+     */
+    private function setPackages(array $packages): void
     {
         $id = 1;
 
@@ -111,28 +188,23 @@ class Pool implements \Countable
     /**
      * @return BasePackage[]
      */
-    public function getPackages()
+    public function getPackages(): array
     {
         return $this->packages;
     }
 
     /**
      * Retrieves the package object for a given package id.
-     *
-     * @param  int         $id
-     * @return BasePackage
      */
-    public function packageById($id)
+    public function packageById(int $id): BasePackage
     {
         return $this->packages[$id - 1];
     }
 
     /**
      * Returns how many packages have been loaded into the pool
-     * @return int
      */
-    #[\ReturnTypeWillChange]
-    public function count()
+    public function count(): int
     {
         return \count($this->packages);
     }
@@ -145,7 +217,7 @@ class Pool implements \Countable
      *                                         packages must match or null to return all
      * @return BasePackage[] A set of packages
      */
-    public function whatProvides($name, ConstraintInterface $constraint = null)
+    public function whatProvides(string $name, ?ConstraintInterface $constraint = null): array
     {
         $key = (string) $constraint;
         if (isset($this->providerCache[$name][$key])) {
@@ -161,13 +233,13 @@ class Pool implements \Countable
      *                                          packages must match or null to return all
      * @return BasePackage[]
      */
-    private function computeWhatProvides($name, ConstraintInterface $constraint = null)
+    private function computeWhatProvides(string $name, ?ConstraintInterface $constraint = null): array
     {
         if (!isset($this->packageByName[$name])) {
-            return array();
+            return [];
         }
 
-        $matches = array();
+        $matches = [];
 
         foreach ($this->packageByName[$name] as $candidate) {
             if ($this->match($candidate, $name, $constraint)) {
@@ -178,11 +250,7 @@ class Pool implements \Countable
         return $matches;
     }
 
-    /**
-     * @param int $literal
-     * @return BasePackage
-     */
-    public function literalToPackage($literal)
+    public function literalToPackage(int $literal): BasePackage
     {
         $packageId = abs($literal);
 
@@ -190,11 +258,9 @@ class Pool implements \Countable
     }
 
     /**
-     * @param int $literal
      * @param array<int, BasePackage> $installedMap
-     * @return string
      */
-    public function literalToPrettyString($literal, $installedMap)
+    public function literalToPrettyString(int $literal, array $installedMap): string
     {
         $package = $this->literalToPackage($literal);
 
@@ -212,9 +278,8 @@ class Pool implements \Countable
      * provided or replaced packages
      *
      * @param  string              $name       Name of the package to be matched
-     * @return bool
      */
-    public function match(BasePackage $candidate, $name, ConstraintInterface $constraint = null)
+    public function match(BasePackage $candidate, string $name, ?ConstraintInterface $constraint = null): bool
     {
         $candidateName = $candidate->getName();
         $candidateVersion = $candidate->getVersion();
@@ -254,10 +319,7 @@ class Pool implements \Countable
         return false;
     }
 
-    /**
-     * @return bool
-     */
-    public function isUnacceptableFixedOrLockedPackage(BasePackage $package)
+    public function isUnacceptableFixedOrLockedPackage(BasePackage $package): bool
     {
         return \in_array($package, $this->unacceptableFixedOrLockedPackages, true);
     }
@@ -265,12 +327,12 @@ class Pool implements \Countable
     /**
      * @return BasePackage[]
      */
-    public function getUnacceptableFixedOrLockedPackages()
+    public function getUnacceptableFixedOrLockedPackages(): array
     {
         return $this->unacceptableFixedOrLockedPackages;
     }
 
-    public function __toString()
+    public function __toString(): string
     {
         $str = "Pool:\n";
 

@@ -27,19 +27,19 @@ requirements:
 1. The [type][1] attribute must be `composer-plugin`.
 2. The [extra][2] attribute must contain an element `class` defining the
    class name of the plugin (including namespace). If a package contains
-   multiple plugins, this can be array of class names.
+   multiple plugins, this can be an array of class names.
 3. You must require the special package called `composer-plugin-api`
    to define which Plugin API versions your plugin is compatible with.
    Requiring this package doesn't actually include any extra dependencies,
    it only specifies which version of the plugin API to use.
 
 > **Note:** When developing a plugin, although not required, it's useful to add
-> a require-dev dependency on `composer/composer` to have IDE auto completion on Composer classes.
+> a require-dev dependency on `composer/composer` to have IDE autocompletion on Composer classes.
 
 The required version of the `composer-plugin-api` follows the same [rules][7]
-as a normal package's.
+as a normal package's rules.
 
-The current Composer plugin API version is `2.1.0`.
+The current Composer plugin API version is `2.6.0`.
 
 An example of a valid plugin `composer.json` file (with the autoloading
 part omitted and an optional require-dev dependency on `composer/composer` for IDE auto completion):
@@ -99,7 +99,7 @@ plugin is loaded.
 
 To register a method to an event, implement the method `getSubscribedEvents()`
 and have it return an array. The array key must be the
-[event name](https://getcomposer.org/doc/articles/scripts.md#event-names)
+[event name](./scripts.md#event-names)
 and the value is the name of the method in this class to be called.
 
 > **Note:** If you don't know which event to listen to, you can run a Composer
@@ -109,10 +109,10 @@ and the value is the name of the method in this class to be called.
 ```php
 public static function getSubscribedEvents()
 {
-    return array(
+    return [
         'post-autoload-dump' => 'methodToBeCalled',
         // ^ event name ^         ^ method name ^
-    );
+    ];
 }
 ```
 
@@ -125,10 +125,10 @@ priority 1, etc.
 ```php
 public static function getSubscribedEvents()
 {
-    return array(
+    return [
         // Will be called before events with priority 0
-        'post-autoload-dump' => array('methodToBeCalled', 1)
-    );
+        'post-autoload-dump' => ['methodToBeCalled', 1]
+    ];
 }
 ```
 
@@ -139,12 +139,12 @@ omitted, it will default to 0.
 ```php
 public static function getSubscribedEvents()
 {
-    return array(
-        'post-autoload-dump' => array(
-            array('methodToBeCalled'      ), // Priority defaults to 0
-            array('someOtherMethodName', 1), // This fires first
-        )
-    );
+    return [
+        'post-autoload-dump' => [
+            ['methodToBeCalled'      ], // Priority defaults to 0
+            ['someOtherMethodName', 1], // This fires first
+        ]
+    ];
 }
 ```
 
@@ -183,11 +183,11 @@ class AwsPlugin implements PluginInterface, EventSubscriberInterface
 
     public static function getSubscribedEvents()
     {
-        return array(
-            PluginEvents::PRE_FILE_DOWNLOAD => array(
-                array('onPreFileDownload', 0)
-            ),
-        );
+        return [
+            PluginEvents::PRE_FILE_DOWNLOAD => [
+                ['onPreFileDownload', 0]
+            ],
+        ];
     }
 
     public function onPreFileDownload(PreFileDownloadEvent $event)
@@ -231,9 +231,9 @@ class Plugin implements PluginInterface, Capable
 
     public function getCapabilities()
     {
-        return array(
+        return [
             'Composer\Plugin\Capability\CommandProvider' => 'My\Composer\CommandProvider',
-        );
+        ];
     }
 }
 ```
@@ -257,20 +257,22 @@ class CommandProvider implements CommandProviderCapability
 {
     public function getCommands()
     {
-        return array(new Command);
+        return [new Command];
     }
 }
 
 class Command extends BaseCommand
 {
-    protected function configure()
+    protected function configure(): void
     {
         $this->setName('custom-plugin-command');
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $output->writeln('Executing');
+
+        return 0;
     }
 }
 ```
@@ -283,6 +285,10 @@ Now the `custom-plugin-command` is available alongside Composer commands.
 
 Plugins for an event can be run manually by the `run-script` command. This works the same way as
 [running scripts manually](scripts.md#running-scripts-manually).
+
+If it is another type of plugin the best way to test it is probably using a [path repository](../05-repositories.md#path)
+to require the plugin in a test project. If you are developing locally and want to test frequently, you can make sure the path repository uses symlinks, as changes are updated immediately. Otherwise, you'll have to run `rm -rf vendor && composer update`
+every time you want to install/run it again.
 
 ## Using Plugins
 
@@ -323,6 +329,55 @@ hint to Composer that the plugin should be installed on its own before proceedin
 the rest of the package downloads. This slightly slows down the overall installation
 process however, so do not use it in plugins which do not absolutely require it.
 
+### plugin-modifies-install-path
+
+Some special plugins modify the install path of packages.
+
+As of Composer 2.2.9, you can specify `{"extra": {"plugin-modifies-install-path": true}}`
+in your composer.json to hint to Composer that the plugin should be activated as soon
+as possible to prevent any bad side-effects from Composer assuming packages are installed
+in another location than they actually are.
+
+### plugin-optional
+
+Because Composer plugins can be used to perform actions which are necessary for installing
+a working application, like modifying which path files get stored in, skipping required
+plugins unintentionally can result in broken applications. So, in non-interactive mode,
+Composer will fail if a new plugin is not listed in ["allow-plugins"](../06-config.md#allow-plugins)
+to force users to decide if they want to execute the plugin, to avoid silent failures.
+
+As of Composer 2.5.3, you can use the setting `{"extra": {"plugin-optional": true}}` on
+your plugin, to tell Composer that skipping the plugin has no catastrophic consequences,
+and it can safely be disabled in non-interactive mode if it is not yet listed in
+"allow-plugins". The next interactive run of Composer will still prompt users to choose if
+they want to enable or disable the plugin.
+
+## Plugin Autoloading
+
+Due to plugins being loaded by Composer at runtime, and to ensure that plugins which
+depend on other packages can function correctly, a runtime autoloader is created whenever
+a plugin is loaded. That autoloader is only configured to load with the plugin dependencies,
+so you may not have access to all the packages which are installed.
+
+## Static Analysis support
+
+As of Composer 2.3.7 we ship a `phpstan/rules.neon` PHPStan config file, which provides additional error checking when working on Composer plugins.
+
+### Usage with [PHPStan Extension Installer][13]
+
+The necessary configuration files are automatically loaded, in case your plugin projects declares a dependency to `phpstan/extension-installer`.
+
+### Alternative manual installation
+
+To make use of it, your Composer plugin project needs a [PHPStan config file][12], which includes the `phpstan/rules.neon` file:
+
+```neon
+includes:
+	- vendor/composer/composer/phpstan/rules.neon
+
+// your remaining config..
+```
+
 [1]: ../04-schema.md#type
 [2]: ../04-schema.md#extra
 [3]: https://github.com/composer/composer/blob/main/src/Composer/Plugin/PluginInterface.php
@@ -334,3 +389,5 @@ process however, so do not use it in plugins which do not absolutely require it.
 [9]: https://github.com/composer/composer/blob/main/src/Composer/Plugin/Capability/CommandProvider.php
 [10]: https://symfony.com/doc/current/components/console.html
 [11]: https://github.com/composer/composer/blob/main/src/Composer/Util/SyncHelper.php
+[12]: https://phpstan.org/config-reference#multiple-files
+[13]: https://github.com/phpstan/extension-installer#usage

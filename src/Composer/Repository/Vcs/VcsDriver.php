@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -44,8 +44,8 @@ abstract class VcsDriver implements VcsDriverInterface
     protected $process;
     /** @var HttpDownloader */
     protected $httpDownloader;
-    /** @var array<string, mixed> */
-    protected $infoCache = array();
+    /** @var array<int|string, mixed> */
+    protected $infoCache = [];
     /** @var ?Cache */
     protected $cache;
 
@@ -75,11 +75,9 @@ abstract class VcsDriver implements VcsDriverInterface
 
     /**
      * Returns whether or not the given $identifier should be cached or not.
-     *
-     * @param  string $identifier
-     * @return bool
+     * @phpstan-assert-if-true !null $this->cache
      */
-    protected function shouldCache($identifier)
+    protected function shouldCache(string $identifier): bool
     {
         return $this->cache && Preg::isMatch('{^[a-f0-9]{40}$}iD', $identifier);
     }
@@ -87,7 +85,7 @@ abstract class VcsDriver implements VcsDriverInterface
     /**
      * @inheritDoc
      */
-    public function getComposerInformation($identifier)
+    public function getComposerInformation(string $identifier): ?array
     {
         if (!isset($this->infoCache[$identifier])) {
             if ($this->shouldCache($identifier) && $res = $this->cache->read($identifier)) {
@@ -97,7 +95,7 @@ abstract class VcsDriver implements VcsDriverInterface
             $composer = $this->getBaseComposerInformation($identifier);
 
             if ($this->shouldCache($identifier)) {
-                $this->cache->write($identifier, JsonFile::encode($composer, 0));
+                $this->cache->write($identifier, JsonFile::encode($composer, \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES));
             }
 
             $this->infoCache[$identifier] = $composer;
@@ -107,11 +105,9 @@ abstract class VcsDriver implements VcsDriverInterface
     }
 
     /**
-     * @param string $identifier
-     *
-     * @return array<string, mixed>|null
+     * @return array<mixed>|null
      */
-    protected function getBaseComposerInformation($identifier)
+    protected function getBaseComposerInformation(string $identifier): ?array
     {
         $composerFileContent = $this->getFileContent('composer.json', $identifier);
 
@@ -121,7 +117,11 @@ abstract class VcsDriver implements VcsDriverInterface
 
         $composer = JsonFile::parseJson($composerFileContent, $identifier . ':composer.json');
 
-        if (empty($composer['time']) && $changeDate = $this->getChangeDate($identifier)) {
+        if ([] === $composer || !is_array($composer)) {
+            return null;
+        }
+
+        if (empty($composer['time']) && null !== ($changeDate = $this->getChangeDate($identifier))) {
             $composer['time'] = $changeDate->format(DATE_RFC3339);
         }
 
@@ -131,10 +131,10 @@ abstract class VcsDriver implements VcsDriverInterface
     /**
      * @inheritDoc
      */
-    public function hasComposerFile($identifier)
+    public function hasComposerFile(string $identifier): bool
     {
         try {
-            return (bool) $this->getComposerInformation($identifier);
+            return null !== $this->getComposerInformation($identifier);
         } catch (TransportException $e) {
         }
 
@@ -148,7 +148,7 @@ abstract class VcsDriver implements VcsDriverInterface
      *
      * @return string The correct type of protocol
      */
-    protected function getScheme()
+    protected function getScheme(): string
     {
         if (extension_loaded('openssl')) {
             return 'https';
@@ -162,12 +162,11 @@ abstract class VcsDriver implements VcsDriverInterface
      *
      * @param string $url The URL of content
      *
-     * @return Response
      * @throws TransportException
      */
-    protected function getContents($url)
+    protected function getContents(string $url): Response
     {
-        $options = isset($this->repoConfig['options']) ? $this->repoConfig['options'] : array();
+        $options = $this->repoConfig['options'] ?? [];
 
         return $this->httpDownloader->get($url, $options);
     }
@@ -175,8 +174,7 @@ abstract class VcsDriver implements VcsDriverInterface
     /**
      * @inheritDoc
      */
-    public function cleanup()
+    public function cleanup(): void
     {
-        return;
     }
 }

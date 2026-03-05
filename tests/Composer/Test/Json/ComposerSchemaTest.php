@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -12,6 +12,7 @@
 
 namespace Composer\Test\Json;
 
+use Composer\Json\JsonFile;
 use JsonSchema\Validator;
 use Composer\Test\TestCase;
 
@@ -20,84 +21,208 @@ use Composer\Test\TestCase;
  */
 class ComposerSchemaTest extends TestCase
 {
-    public function testNamePattern()
+    public function testNamePattern(): void
     {
-        $expectedError = array(
-            array(
+        $expectedError = [
+            [
                 'property' => 'name',
-                'message' => 'Does not match the regex pattern ^[a-z0-9]([_.-]?[a-z0-9]+)*/[a-z0-9](([_.]?|-{0,2})[a-z0-9]+)*$',
-                'constraint' => 'pattern',
-                'pattern' => '^[a-z0-9]([_.-]?[a-z0-9]+)*/[a-z0-9](([_.]?|-{0,2})[a-z0-9]+)*$',
-            ),
-        );
+                'message' => 'Does not match the regex pattern ^[a-z0-9]([_.-]?[a-z0-9]+)*/[a-z0-9](([_.]|-{1,2})?[a-z0-9]+)*$',
+                'constraint' => [
+                    'name' => 'pattern',
+                    'params' => [
+                        'pattern' => '^[a-z0-9]([_.-]?[a-z0-9]+)*/[a-z0-9](([_.]|-{1,2})?[a-z0-9]+)*$',
+                    ],
+                ],
+            ],
+        ];
 
         $json = '{"name": "vendor/-pack__age", "description": "description"}';
-        $this->assertEquals($expectedError, $this->check($json));
+        self::assertEquals($expectedError, $this->check($json));
         $json = '{"name": "Vendor/Package", "description": "description"}';
-        $this->assertEquals($expectedError, $this->check($json));
+        self::assertEquals($expectedError, $this->check($json));
     }
 
-    public function testOptionalAbandonedProperty()
+    public function versionProvider(): array
     {
-        $json = '{"name": "vendor/package", "description": "description", "abandoned": true}';
-        $this->assertTrue($this->check($json));
-    }
+        return [
+            ['1.0.0', true],
+            ['1.0.2', true],
+            ['1.1.0', true],
+            ['1.0.0-dev', true],
+            ['1.0.0-Alpha', true],
+            ['1.0.0-ALPHA', true],
+            ['1.0.0-alphA', true],
+            ['1.0.0-alpha3', true],
+            ['1.0.0-Alpha3', true],
+            ['1.0.0-ALPHA3', true],
+            ['1.0.0-Beta', true],
+            ['1.0.0-BETA', true],
+            ['1.0.0-betA', true],
+            ['1.0.0-beta232', true],
+            ['1.0.0-Beta232', true],
+            ['1.0.0-BETA232', true],
+            ['10.4.13beta.2', true],
+            ['1.0.0.RC.15-dev', true],
+            ['1.0.0-RC', true],
+            ['v2.0.4-p', true],
+            ['dev-master', true],
+            ['0.2.5.4', true],
+            ['12345678-123456', true],
+            ['20100102-203040-p1', true],
+            ['2010-01-02.5', true],
+            ['0.2.5.4-rc.2', true],
+            ['dev-feature+issue-1', true],
+            ['1.0.0-alpha.3.1+foo/-bar', true],
+            ['00.01.03.04', true],
+            ['041.x-dev', true],
+            ['dev-foo bar', true],
 
-    public function testRequireTypes()
-    {
-        $json = '{"name": "vendor/package", "description": "description", "require": {"a": ["b"]} }';
-        $this->assertEquals(array(
-            array('property' => 'require.a', 'message' => 'Array value found, but a string is required', 'constraint' => 'type'),
-        ), $this->check($json));
-    }
-
-    public function testMinimumStabilityValues()
-    {
-        $expectedError = array(
-            array(
-                'property' => 'minimum-stability',
-                'message' => 'Does not have a value in the enumeration ["dev","alpha","beta","rc","RC","stable"]',
-                'constraint' => 'enum',
-                'enum' => array('dev', 'alpha', 'beta', 'rc', 'RC', 'stable'),
-            ),
-        );
-
-        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "" }';
-        $this->assertEquals($expectedError, $this->check($json), 'empty string');
-
-        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "dummy" }';
-        $this->assertEquals($expectedError, $this->check($json), 'dummy');
-
-        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "devz" }';
-        $this->assertEquals($expectedError, $this->check($json), 'devz');
-
-        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "dev" }';
-        $this->assertTrue($this->check($json), 'dev');
-
-        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "alpha" }';
-        $this->assertTrue($this->check($json), 'alpha');
-
-        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "beta" }';
-        $this->assertTrue($this->check($json), 'beta');
-
-        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "rc" }';
-        $this->assertTrue($this->check($json), 'rc lowercase');
-
-        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "RC" }';
-        $this->assertTrue($this->check($json), 'rc uppercase');
-
-        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "stable" }';
-        $this->assertTrue($this->check($json), 'stable');
+            ['invalid', false],
+            ['1.0be', false],
+            ['1.0.0-meh', false],
+            ['feature-foo', false],
+            ['1.0 .2', false],
+        ];
     }
 
     /**
-     * @param string $json
+     * @dataProvider versionProvider
+     */
+    public function testVersionPattern(string $version, bool $isValid): void
+    {
+        $json = '{"name": "vendor/package", "description": "description", "version": "' . $version . '"}';
+        if ($isValid) {
+            self::assertTrue($this->check($json));
+        } else {
+            self::assertEquals([
+                [
+                    'property' => 'version',
+                    'message' => 'Does not match the regex pattern ^[vV]?\\d+(?:[.-]\\d+){0,3}[._-]?(?:(?:[sS][tT][aA][bB][lL][eE]|[bB][eE][tT][aA]|[bB]|[rR][cC]|[aA][lL][pP][hH][aA]|[aA]|[pP][aA][tT][cC][hH]|[pP][lL]|[pP])(?:(?:[.-]?\\d+)*)?)?(?:[.-]?[dD][eE][vV]|\\.x-dev)?(?:\\+.*)?$|^dev-.*$',
+                    'constraint' => [
+                        'name' => 'pattern',
+                        'params' => [
+                            'pattern' => '^[vV]?\\d+(?:[.-]\\d+){0,3}[._-]?(?:(?:[sS][tT][aA][bB][lL][eE]|[bB][eE][tT][aA]|[bB]|[rR][cC]|[aA][lL][pP][hH][aA]|[aA]|[pP][aA][tT][cC][hH]|[pP][lL]|[pP])(?:(?:[.-]?\\d+)*)?)?(?:[.-]?[dD][eE][vV]|\\.x-dev)?(?:\\+.*)?$|^dev-.*$',
+                        ],
+                    ],
+                ],
+            ], $this->check($json));
+        }
+    }
+
+    public function testOptionalAbandonedProperty(): void
+    {
+        $json = '{"name": "vendor/package", "description": "description", "abandoned": true}';
+        self::assertTrue($this->check($json));
+    }
+
+    public function testRequireTypes(): void
+    {
+        $json = '{"name": "vendor/package", "description": "description", "require": {"a": ["b"]} }';
+        self::assertEquals([
+            [
+                'property' => 'require.a',
+                'message' => 'Array value found, but a string is required',
+                'constraint' => ['name' => 'type', 'params' => ['found' => 'array', 'expected' => 'a string']],
+            ],
+        ], $this->check($json));
+    }
+
+    public function testMinimumStabilityValues(): void
+    {
+        $expectedError = [
+            [
+                'property' => 'minimum-stability',
+                'message' => 'Does not have a value in the enumeration ["dev","alpha","beta","rc","RC","stable"]',
+                'constraint' => [
+                    'name' => 'enum',
+                    'params' => [
+                        'enum' => ['dev', 'alpha', 'beta', 'rc', 'RC', 'stable'],
+                    ],
+                ],
+            ],
+        ];
+
+        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "" }';
+        self::assertEquals($expectedError, $this->check($json), 'empty string');
+
+        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "dummy" }';
+        self::assertEquals($expectedError, $this->check($json), 'dummy');
+
+        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "devz" }';
+        self::assertEquals($expectedError, $this->check($json), 'devz');
+
+        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "dev" }';
+        self::assertTrue($this->check($json), 'dev');
+
+        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "alpha" }';
+        self::assertTrue($this->check($json), 'alpha');
+
+        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "beta" }';
+        self::assertTrue($this->check($json), 'beta');
+
+        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "rc" }';
+        self::assertTrue($this->check($json), 'rc lowercase');
+
+        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "RC" }';
+        self::assertTrue($this->check($json), 'rc uppercase');
+
+        $json = '{ "name": "vendor/package", "description": "generic description", "minimum-stability": "stable" }';
+        self::assertTrue($this->check($json), 'stable');
+    }
+
+    public function assertAmbiguousRepositoryNotPossible(): void
+    {
+        $json = '{
+    "repositories": {
+        "foo": {
+            "name": "bar",
+            "type": "path",
+            "url": "vendor/package"
+        }
+    }
+}';
+        self::assertFalse($this->check($json));
+
+        $json = '{
+    "repositories": {
+        "foo": {
+            "type": "path",
+            "url": "vendor/package"
+        }
+    }
+}';
+        self::assertTrue($this->check($json));
+
+        $json = '{
+    "repositories": [
+        {
+            "name": "foo",
+            "type": "path",
+            "url": "vendor/package"
+        }
+    ]
+}';
+        self::assertTrue($this->check($json));
+
+        $json = '{
+    "repositories": [
+        {
+            "type": "path",
+            "url": "vendor/package"
+        }
+    ]
+}';
+        self::assertTrue($this->check($json));
+    }
+
+    /**
      * @return mixed
      */
-    private function check($json)
+    private function check(string $json)
     {
         $validator = new Validator();
-        $validator->check(json_decode($json), (object) array('$ref' => 'file://' . __DIR__ . '/../../../../res/composer-schema.json'));
+        $json = json_decode($json);
+        $validator->validate($json, (object) ['$ref' => 'file://' . JsonFile::COMPOSER_SCHEMA_PATH]);
 
         if (!$validator->isValid()) {
             $errors = $validator->getErrors();

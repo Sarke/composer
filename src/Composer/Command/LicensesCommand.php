@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -12,15 +12,17 @@
 
 namespace Composer\Command;
 
+use Composer\Console\Input\InputOption;
 use Composer\Json\JsonFile;
 use Composer\Package\CompletePackageInterface;
 use Composer\Plugin\CommandEvent;
 use Composer\Plugin\PluginEvents;
-use Composer\Package\PackageInterface;
-use Composer\Repository\RepositoryInterface;
+use Composer\Repository\RepositoryUtils;
+use Composer\Util\PackageInfo;
+use Composer\Util\PackageSorter;
+use Symfony\Component\Console\Formatter\OutputFormatter;
 use Symfony\Component\Console\Helper\Table;
 use Symfony\Component\Console\Input\InputInterface;
-use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
@@ -29,22 +31,23 @@ use Symfony\Component\Console\Style\SymfonyStyle;
  */
 class LicensesCommand extends BaseCommand
 {
-    /**
-     * @return void
-     */
-    protected function configure()
+    protected function configure(): void
     {
         $this
             ->setName('licenses')
-            ->setDescription('Shows information about licenses of dependencies.')
-            ->setDefinition(array(
-                new InputOption('format', 'f', InputOption::VALUE_REQUIRED, 'Format of the output: text, json or summary', 'text'),
+            ->setDescription('Shows information about licenses of dependencies')
+            ->setDefinition([
+                new InputOption('format', 'f', InputOption::VALUE_REQUIRED, 'Format of the output: text, json or summary', 'text', ['text', 'json', 'summary']),
                 new InputOption('no-dev', null, InputOption::VALUE_NONE, 'Disables search in require-dev packages.'),
-            ))
+                new InputOption('locked', null, InputOption::VALUE_NONE, 'Shows licenses from the lock file instead of installed packages.'),
+            ])
             ->setHelp(
                 <<<EOT
 The license command displays detailed information about the licenses of
 the installed dependencies.
+
+Use --locked to show licenses from composer.lock instead of what's currently
+installed in the vendor directory.
 
 Read more at https://getcomposer.org/doc/03-cli.md#licenses
 EOT
@@ -52,26 +55,33 @@ EOT
         ;
     }
 
-    /**
-     * @return int
-     */
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $composer = $this->getComposer();
+        $composer = $this->requireComposer();
 
         $commandEvent = new CommandEvent(PluginEvents::COMMAND, 'licenses', $input, $output);
         $composer->getEventDispatcher()->dispatch($commandEvent->getName(), $commandEvent);
 
         $root = $composer->getPackage();
-        $repo = $composer->getRepositoryManager()->getLocalRepository();
 
-        if ($input->getOption('no-dev')) {
-            $packages = $this->filterRequiredPackages($repo, $root);
+        if ($input->getOption('locked')) {
+            if (!$composer->getLocker()->isLocked()) {
+                throw new \UnexpectedValueException('Valid composer.json and composer.lock files are required to run this command with --locked');
+            }
+            $locker = $composer->getLocker();
+            $repo = $locker->getLockedRepository(!$input->getOption('no-dev'));
+            $packages = $repo->getPackages();
         } else {
-            $packages = $this->appendPackages($repo->getPackages(), array());
+            $repo = $composer->getRepositoryManager()->getLocalRepository();
+
+            if ($input->getOption('no-dev')) {
+                $packages = RepositoryUtils::filterRequiredPackages($repo->getPackages(), $root);
+            } else {
+                $packages = $repo->getPackages();
+            }
         }
 
-        ksort($packages);
+        $packages = PackageSorter::sortPackagesAlphabetically($packages);
         $io = $this->getIO();
 
         switch ($format = $input->getOption('format')) {
@@ -84,65 +94,67 @@ EOT
 
                 $table = new Table($output);
                 $table->setStyle('compact');
-                $tableStyle = $table->getStyle();
-                if (method_exists($tableStyle, 'setVerticalBorderChars')) {
-                    $tableStyle->setVerticalBorderChars('');
-                } else {
-                    // TODO remove in composer 2.2
-                    // @phpstan-ignore-next-line
-                    $tableStyle->setVerticalBorderChar('');
-                }
-                $tableStyle->setCellRowContentFormat('%s  ');
-                $table->setHeaders(array('Name', 'Version', 'License'));
+                $table->setHeaders(['Name', 'Version', 'Licenses']);
                 foreach ($packages as $package) {
-                    $table->addRow(array(
-                        $package->getPrettyName(),
+                    $link = PackageInfo::getViewSourceOrHomepageUrl($package);
+                    if ($link !== null) {
+                        $name = '<href='.OutputFormatter::escape($link).'>'.$package->getPrettyName().'</>';
+                    } else {
+                        $name = $package->getPrettyName();
+                    }
+
+                    $table->addRow([
+                        $name,
                         $package->getFullPrettyVersion(),
-                        implode(', ', $package instanceof CompletePackageInterface ? $package->getLicense() : array()) ?: 'none',
-                    ));
+                        implode(', ', $package instanceof CompletePackageInterface ? $package->getLicense() : []) ?: 'none',
+                    ]);
                 }
                 $table->render();
                 break;
 
             case 'json':
-                $dependencies = array();
+                $dependencies = [];
                 foreach ($packages as $package) {
-                    $dependencies[$package->getPrettyName()] = array(
+                    $dependencies[$package->getPrettyName()] = [
                         'version' => $package->getFullPrettyVersion(),
-                        'license' => $package instanceof CompletePackageInterface ? $package->getLicense() : array(),
-                    );
+                        'license' => $package instanceof CompletePackageInterface ? $package->getLicense() : [],
+                    ];
                 }
 
-                $io->write(JsonFile::encode(array(
+                $io->write(JsonFile::encode([
                     'name' => $root->getPrettyName(),
                     'version' => $root->getFullPrettyVersion(),
                     'license' => $root->getLicense(),
                     'dependencies' => $dependencies,
-                )));
+                ]));
                 break;
 
             case 'summary':
-                $usedLicenses = array();
+                $usedLicenses = [];
                 foreach ($packages as $package) {
-                    $license = $package instanceof CompletePackageInterface ? $package->getLicense() : array();
-                    $licenseName = $license[0];
-                    if (!isset($usedLicenses[$licenseName])) {
-                        $usedLicenses[$licenseName] = 0;
+                    $licenses = $package instanceof CompletePackageInterface ? $package->getLicense() : [];
+                    if (count($licenses) === 0) {
+                        $licenses[] = 'none';
                     }
-                    $usedLicenses[$licenseName]++;
+                    foreach ($licenses as $licenseName) {
+                        if (!isset($usedLicenses[$licenseName])) {
+                            $usedLicenses[$licenseName] = 0;
+                        }
+                        $usedLicenses[$licenseName]++;
+                    }
                 }
 
                 // Sort licenses so that the most used license will appear first
                 arsort($usedLicenses, SORT_NUMERIC);
 
-                $rows = array();
+                $rows = [];
                 foreach ($usedLicenses as $usedLicense => $numberOfDependencies) {
-                    $rows[] = array($usedLicense, $numberOfDependencies);
+                    $rows[] = [$usedLicense, $numberOfDependencies];
                 }
 
                 $symfonyIo = new SymfonyStyle($input, $output);
                 $symfonyIo->table(
-                    array('License', 'Number of dependencies'),
+                    ['License', 'Number of dependencies'],
                     $rows
                 );
                 break;
@@ -151,48 +163,5 @@ EOT
         }
 
         return 0;
-    }
-
-    /**
-     * Find package requires and child requires
-     *
-     * @param  array<string, PackageInterface> $bucket
-     * @return array<string, PackageInterface>
-     */
-    private function filterRequiredPackages(RepositoryInterface $repo, PackageInterface $package, $bucket = array())
-    {
-        $requires = array_keys($package->getRequires());
-
-        $packageListNames = array_keys($bucket);
-        $packages = array_filter(
-            $repo->getPackages(),
-            function ($package) use ($requires, $packageListNames) {
-                return in_array($package->getName(), $requires) && !in_array($package->getName(), $packageListNames);
-            }
-        );
-
-        $bucket = $this->appendPackages($packages, $bucket);
-
-        foreach ($packages as $package) {
-            $bucket = $this->filterRequiredPackages($repo, $package, $bucket);
-        }
-
-        return $bucket;
-    }
-
-    /**
-     * Adds packages to the package list
-     *
-     * @param  PackageInterface[]              $packages the list of packages to add
-     * @param  array<string, PackageInterface> $bucket   the list to add packages to
-     * @return array<string, PackageInterface>
-     */
-    public function appendPackages(array $packages, array $bucket)
-    {
-        foreach ($packages as $package) {
-            $bucket[$package->getName()] = $package;
-        }
-
-        return $bucket;
     }
 }
