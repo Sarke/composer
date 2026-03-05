@@ -16,7 +16,7 @@ specific logic.
 ## Alternative to custom installers with Composer 2.1+
 
 As of Composer 2.1, the `Composer\InstalledVersions` class has a
-[`getInstalledPackagesByType`](https://getcomposer.org/doc/07-runtime.md#knowing-which-packages-of-a-given-type-are-installed)
+[`getInstalledPackagesByType`](../07-runtime.md#knowing-which-packages-of-a-given-type-are-installed)
 method which can let you figure out at runtime which plugins/modules/extensions are installed.
 
 It is highly recommended to use that instead of building new custom
@@ -78,7 +78,7 @@ requirements:
 1. the [type][1] attribute must be `composer-plugin`.
 2. the [extra][2] attribute must contain an element `class` defining the
    class name of the plugin (including namespace). If a package contains
-   multiple plugins this can be array of class names.
+   multiple plugins, this can be an array of class names.
 
 Example:
 
@@ -157,9 +157,8 @@ source for the exact signature):
   invoked with the update argument.
 * **uninstall()**, here you can determine the actions that need to be executed
   when the package needs to be removed.
-* **getInstallPath()**, this method should return the location where the
-  package is to be installed, _relative from the location of composer.json._
-  The path _must not end with a slash._
+* **getInstallPath()**, this method should return the absolute path where the
+  package is to be installed. The path _must not end with a slash._
 
 Example:
 

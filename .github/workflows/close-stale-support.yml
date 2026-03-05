@@ -13,13 +13,14 @@ jobs:
       pull-requests: write
 
     steps:
-    - uses: actions/stale@v3
+    - uses: actions/stale@b5d41d4e1d5dceea10e7104786b73624c18a190f # v10.2.0
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
         days-before-stale: 180
         days-before-close: 15
         stale-issue-message: 'This issue has been automatically marked Stale and will be closed in 15 days if no further activity happens.'
         stale-issue-label: 'Stale'
-        only-labels: 'Support'
+        close-issue-reason: 'not_planned'
+        only-issue-types: 'Support'
         exempt-all-milestones: true
         ascending: true

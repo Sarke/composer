@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -12,69 +12,61 @@
 
 namespace Composer\Platform;
 
+use Composer\Pcre\Preg;
+
 class Runtime
 {
     /**
-     * @param string $constant
      * @param class-string $class
-     *
-     * @return bool
      */
-    public function hasConstant($constant, $class = null)
+    public function hasConstant(string $constant, ?string $class = null): bool
     {
         return defined(ltrim($class.'::'.$constant, ':'));
     }
 
     /**
-     * @param string $constant
      * @param class-string $class
      *
      * @return mixed
      */
-    public function getConstant($constant, $class = null)
+    public function getConstant(string $constant, ?string $class = null)
     {
         return constant(ltrim($class.'::'.$constant, ':'));
     }
 
-    /**
-     * @param string $fn
-     *
-     * @return bool
-     */
-    public function hasFunction($fn)
+    public function hasFunction(string $fn): bool
     {
         return function_exists($fn);
     }
 
     /**
-     * @param callable $callable
      * @param mixed[] $arguments
      *
      * @return mixed
      */
-    public function invoke($callable, array $arguments = array())
+    public function invoke(callable $callable, array $arguments = [])
     {
-        return call_user_func_array($callable, $arguments);
+        return $callable(...$arguments);
     }
 
     /**
      * @param class-string $class
-     *
-     * @return bool
      */
-    public function hasClass($class)
+    public function hasClass(string $class): bool
     {
         return class_exists($class, false);
     }
 
     /**
-     * @param class-string $class
+     * @template T of object
      * @param mixed[] $arguments
      *
-     * @return object
+     * @phpstan-param class-string<T> $class
+     * @phpstan-return T
+     *
      * @throws \ReflectionException
      */
-    public function construct($class, array $arguments = array())
+    public function construct(string $class, array $arguments = []): object
     {
         if (empty($arguments)) {
             return new $class;
@@ -86,34 +78,62 @@ class Runtime
     }
 
     /** @return string[] */
-    public function getExtensions()
+    public function getExtensions(): array
     {
         return get_loaded_extensions();
     }
 
-    /**
-     * @param string $extension
-     *
-     * @return string
-     */
-    public function getExtensionVersion($extension)
+    public function getExtensionVersion(string $extension): string
     {
-        return phpversion($extension);
+        $version = phpversion($extension);
+        if ($version === false) {
+            $version = '0';
+        }
+
+        return $version;
     }
 
     /**
-     * @param string $extension
-     *
-     * @return string
      * @throws \ReflectionException
      */
-    public function getExtensionInfo($extension)
+    public function getExtensionInfo(string $extension): string
     {
         $reflector = new \ReflectionExtension($extension);
 
         ob_start();
         $reflector->info();
 
-        return ob_get_clean();
+        $info = (string) ob_get_clean();
+
+        if ('cli' === PHP_SAPI) {
+            return $info;
+        }
+
+        return self::parseHtmlExtensionInfo($info);
+    }
+
+    /**
+     * @internal Only public for unit tests
+     */
+    public static function parseHtmlExtensionInfo(string $html): string
+    {
+        $result = [];
+
+        if ((bool) Preg::match('~<h2>\s*<a[^>]*>([^<]+)</a>\s*</h2>~i', $html, $matches)) {
+            $result[] = trim(html_entity_decode($matches[1]));
+            $result[] = '';
+        }
+
+        if ((bool) Preg::matchAll('~<tr>\s*<td class="e">\s*(.*?)\s*</td>\s*<td class="v">\s*(.*?)\s*</td>\s*</tr>~is', $html, $matches)) {
+            $count = min(\count($matches[1]), \count($matches[2]));
+
+            for ($i = 0; $i < $count; $i++) {
+                $key   = trim(html_entity_decode(strip_tags($matches[1][$i])));
+                $value = trim(html_entity_decode(strip_tags($matches[2][$i])));
+                $result[] = $key . ' => ' . $value;
+            }
+        }
+
+        return implode("\n", $result);
     }
 }

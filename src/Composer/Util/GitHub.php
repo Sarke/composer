@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -23,6 +23,8 @@ use Composer\Pcre\Preg;
  */
 class GitHub
 {
+    public const GITHUB_TOKEN_REGEX = '{^([a-f0-9]{12,}|gh[a-z]_[a-zA-Z0-9_]+|github_pat_[a-zA-Z0-9_]+)$}';
+
     /** @var IOInterface */
     protected $io;
     /** @var Config */
@@ -40,7 +42,7 @@ class GitHub
      * @param ProcessExecutor $process        Process instance, injectable for mocking
      * @param HttpDownloader  $httpDownloader Remote Filesystem, injectable for mocking
      */
-    public function __construct(IOInterface $io, Config $config, ProcessExecutor $process = null, HttpDownloader $httpDownloader = null)
+    public function __construct(IOInterface $io, Config $config, ?ProcessExecutor $process = null, ?HttpDownloader $httpDownloader = null)
     {
         $this->io = $io;
         $this->config = $config;
@@ -54,14 +56,14 @@ class GitHub
      * @param  string $originUrl The host this GitHub instance is located at
      * @return bool   true on success
      */
-    public function authorizeOAuth($originUrl)
+    public function authorizeOAuth(string $originUrl): bool
     {
         if (!in_array($originUrl, $this->config->get('github-domains'))) {
             return false;
         }
 
         // if available use token from git config
-        if (0 === $this->process->execute('git config github.accesstoken', $output)) {
+        if (0 === $this->process->execute(['git', 'config', 'github.accesstoken'], $output)) {
             $this->io->setAuthentication($originUrl, trim($output), 'x-oauth-basic');
 
             return true;
@@ -79,31 +81,64 @@ class GitHub
      * @throws TransportException|\Exception
      * @return bool                          true on success
      */
-    public function authorizeOAuthInteractively($originUrl, $message = null)
+    public function authorizeOAuthInteractively(string $originUrl, ?string $message = null): bool
     {
         if ($message) {
             $this->io->writeError($message);
         }
 
         $note = 'Composer';
-        if ($this->config->get('github-expose-hostname') === true && 0 === $this->process->execute('hostname', $output)) {
+        if ($this->config->get('github-expose-hostname') === true && 0 === $this->process->execute(['hostname'], $output)) {
             $note .= ' on ' . trim($output);
         }
         $note .= ' ' . date('Y-m-d Hi');
 
-        $url = 'https://'.$originUrl.'/settings/tokens/new?scopes=&description=' . str_replace('%20', '+', rawurlencode($note));
-        $this->io->writeError(sprintf('When working with _public_ GitHub repositories only, head to %s to retrieve a token.', $url));
-        $this->io->writeError('This token will have read-only permission for public information only.');
+        $localAuthConfig = $this->config->getLocalAuthConfigSource();
 
-        $url = 'https://'.$originUrl.'/settings/tokens/new?scopes=repo&description=' . str_replace('%20', '+', rawurlencode($note));
-        $this->io->writeError(sprintf('When you need to access _private_ GitHub repositories as well, go to %s', $url));
-        $this->io->writeError('Note that such tokens have broad read/write permissions on your behalf, even if not needed by Composer.');
-        $this->io->writeError(sprintf('Tokens will be stored in plain text in "%s" for future use by Composer.', $this->config->getAuthConfigSource()->getName()));
+        $this->io->writeError([
+            'You need to provide a GitHub access token.',
+            sprintf('Tokens will be stored in plain text in "%s" for future use by Composer.', ($localAuthConfig !== null ? $localAuthConfig->getName() . ' OR ' : '') . $this->config->getAuthConfigSource()->getName()),
+            'Due to the security risk of tokens being exfiltrated, use tokens with short expiration times and only the minimum permissions necessary.',
+            '',
+            'Carefully consider the following options in order:',
+            '',
+        ]);
+
+        $this->io->writeError([
+            '1. When you don\'t use \'vcs\'  type \'repositories\'  in composer.json and do not need to clone source or download dist files',
+            'from private GitHub repositories over HTTPS, use a fine-grained token with read-only access to public information.',
+            'Use the following URL to create such a token:',
+            'https://'.$originUrl.'/settings/personal-access-tokens/new?name=' . str_replace('%20', '+', rawurlencode($note)),
+            '',
+        ]);
+
+        $this->io->writeError([
+            '2. When all relevant _private_ GitHub repositories belong to a single user or organisation, use a fine-grained token with',
+            'repository "content" read-only permissions. You can start with the following URL, but you may need to change the resource owner',
+            'to the right user or organisation. Additionally, you can scope permissions down to apply only to selected repositories.',
+            'https://'.$originUrl.'/settings/personal-access-tokens/new?contents=read&name=' . str_replace('%20', '+', rawurlencode($note)),
+            '',
+        ]);
+
+        $this->io->writeError([
+            '3. A "classic" token grants broad permissions on your behalf to all repositories accessible by you.',
+            'This may include write permissions, even though not needed by Composer. Use it only when you need to access',
+            'private repositories across multiple organisations at the same time and using directory-specific authentication sources',
+            'is not an option. You can generate a classic token here:',
+            'https://'.$originUrl.'/settings/tokens/new?scopes=repo&description=' . str_replace('%20', '+', rawurlencode($note)),
+            '',
+        ]);
+
         $this->io->writeError('For additional information, check https://getcomposer.org/doc/articles/authentication-for-private-packages.md#github-oauth');
 
-        $token = trim($this->io->askAndHideAnswer('Token (hidden): '));
+        $storeInLocalAuthConfig = false;
+        if ($localAuthConfig !== null) {
+            $storeInLocalAuthConfig = $this->io->askConfirmation('A local auth config source was found, do you want to store the token there?', true);
+        }
 
-        if (!$token) {
+        $token = trim((string) $this->io->askAndHideAnswer('Token (hidden): '));
+
+        if ($token === '') {
             $this->io->writeError('<warning>No token given, aborting.</warning>');
             $this->io->writeError('You can also add it manually later by using "composer config --global --auth github-oauth.github.com <token>"');
 
@@ -115,11 +150,11 @@ class GitHub
         try {
             $apiUrl = ('github.com' === $originUrl) ? 'api.github.com/' : $originUrl . '/api/v3/';
 
-            $this->httpDownloader->get('https://'. $apiUrl, array(
+            $this->httpDownloader->get('https://'. $apiUrl, [
                 'retry-auth-failure' => false,
-            ));
+            ]);
         } catch (TransportException $e) {
-            if (in_array($e->getCode(), array(403, 401))) {
+            if (in_array($e->getCode(), [403, 401])) {
                 $this->io->writeError('<error>Invalid token provided.</error>');
                 $this->io->writeError('You can also add it manually later by using "composer config --global --auth github-oauth.github.com <token>"');
 
@@ -129,9 +164,10 @@ class GitHub
             throw $e;
         }
 
-        // store value in user config
+        // store value in local/user config
+        $authConfigSource = $storeInLocalAuthConfig && $localAuthConfig !== null ? $localAuthConfig : $this->config->getAuthConfigSource();
         $this->config->getConfigSource()->removeConfigSetting('github-oauth.'.$originUrl);
-        $this->config->getAuthConfigSource()->addConfigSetting('github-oauth.'.$originUrl, $token);
+        $authConfigSource->addConfigSetting('github-oauth.'.$originUrl, $token);
 
         $this->io->writeError('<info>Token stored successfully.</info>');
 
@@ -145,24 +181,24 @@ class GitHub
      *
      * @return array{limit: int|'?', reset: string}
      */
-    public function getRateLimit(array $headers)
+    public function getRateLimit(array $headers): array
     {
-        $rateLimit = array(
+        $rateLimit = [
             'limit' => '?',
             'reset' => '?',
-        );
+        ];
 
         foreach ($headers as $header) {
             $header = trim($header);
-            if (false === strpos($header, 'X-RateLimit-')) {
+            if (false === stripos($header, 'x-ratelimit-')) {
                 continue;
             }
-            list($type, $value) = explode(':', $header, 2);
-            switch ($type) {
-                case 'X-RateLimit-Limit':
+            [$type, $value] = explode(':', $header, 2);
+            switch (strtolower($type)) {
+                case 'x-ratelimit-limit':
                     $rateLimit['limit'] = (int) trim($value);
                     break;
-                case 'X-RateLimit-Reset':
+                case 'x-ratelimit-reset':
                     $rateLimit['reset'] = date('Y-m-d H:i:s', (int) trim($value));
                     break;
             }
@@ -172,16 +208,52 @@ class GitHub
     }
 
     /**
+     * Extract SSO URL from response.
+     *
+     * @param string[] $headers Headers from Composer\Downloader\TransportException.
+     */
+    public function getSsoUrl(array $headers): ?string
+    {
+        foreach ($headers as $header) {
+            $header = trim($header);
+            if (false === stripos($header, 'x-github-sso: required')) {
+                continue;
+            }
+            if (Preg::isMatch('{\burl=(?P<url>[^\s;]+)}', $header, $match)) {
+                return $match['url'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Finds whether a request failed due to rate limiting
      *
      * @param string[] $headers Headers from Composer\Downloader\TransportException.
-     *
-     * @return bool
      */
-    public function isRateLimited(array $headers)
+    public function isRateLimited(array $headers): bool
     {
         foreach ($headers as $header) {
-            if (Preg::isMatch('{^X-RateLimit-Remaining: *0$}i', trim($header))) {
+            if (Preg::isMatch('{^x-ratelimit-remaining: *0$}i', trim($header))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Finds whether a request failed due to lacking SSO authorization
+     *
+     * @see https://docs.github.com/en/rest/overview/other-authentication-methods#authenticating-for-saml-sso
+     *
+     * @param string[] $headers Headers from Composer\Downloader\TransportException.
+     */
+    public function requiresSso(array $headers): bool
+    {
+        foreach ($headers as $header) {
+            if (Preg::isMatch('{^x-github-sso: required}i', trim($header))) {
                 return true;
             }
         }

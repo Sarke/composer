@@ -19,7 +19,7 @@ Update updates the outdated state of packages
 --INSTALLED--
 [
     {
-        "name": "a/a", "version": "1.0.0"
+        "name": "a/a", "version": "1.0.0", "type": "library"
     }
 ]
 --EXPECT-LOCK--
@@ -34,12 +34,19 @@ Update updates the outdated state of packages
     "packages-dev": [],
     "aliases": [],
     "minimum-stability": "stable",
-    "stability-flags": [],
+    "stability-flags": {},
     "prefer-stable": false,
     "prefer-lowest": false,
-    "platform": [],
-    "platform-dev": []
+    "platform": {},
+    "platform-dev": {}
 }
+--EXPECT-INSTALLED--
+[
+    {
+        "name": "a/a", "version": "1.0.0", "type": "library", "abandoned": "replacement"
+    }
+]
 --RUN--
 update
 --EXPECT--
+Upgrading a/a (1.0.0 => 1.0.0)

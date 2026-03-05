@@ -101,6 +101,10 @@ source/docblocks of [the class itself](https://github.com/composer/composer/blob
 
 The `getInstallPath` method to retrieve a package's absolute install path.
 
+> **Note:** The path, while absolute, may contain `../` or symlinks. It is
+> not guaranteed to be equivalent to a `realpath()` so you should run a
+> realpath on it if that matters to you.
+
 ```php
 // returns an absolute path to the package installation location if vendor/package is installed,
 // or null if it is provided/replaced, or the package is a metapackage
@@ -161,5 +165,14 @@ about this [on the vendor binaries docs](articles/vendor-binaries.md#finding-the
 This is set by the binary proxy and as such is not made available to projects
 by Composer's `vendor/autoload.php`, which would be useless as it would point back
 to itself.
+
+## Binary (bin-dir) path in binaries
+
+composer-runtime-api 2.2.2 introduced a new `$_composer_bin_dir` global
+variable set when running binaries installed with Composer. Read more
+about this [on the vendor binaries docs](articles/vendor-binaries.md#finding-the-composer-bin-dir-from-a-binary).
+
+This is set by the binary proxy and as such is not made available to projects
+by Composer's `vendor/autoload.php`.
 
 &larr; [Config](06-config.md)  |  [Community](08-community.md) &rarr;

@@ -25,17 +25,17 @@ set up your own package archive on [Packagist.com](https://packagist.com).
 Satis on the other hand is open source but only a static `composer` repository
 generator. It is a bit like an ultra-lightweight, static file-based version of
 packagist and can be used to host the metadata of your company's private
-packages, or your own. You can get it from
-[GitHub](https://github.com/composer/satis) or install via CLI:
-
-    php composer.phar create-project composer/satis --stability=dev --keep-vcs
+packages, or your own. You can install it using [Composer](https://github.com/composer/satis?tab=readme-ov-file#run-from-source)
+or [Docker](https://github.com/composer/satis?tab=readme-ov-file#run-as-docker-container).
 
 ## Setup
 
 For example let's assume you have a few packages you want to reuse across your
 company but don't really want to open-source. You would first define a Satis
-configuration: a json file with an arbitrary name that lists your curated
+configuration: a json file that lists your curated
 [repositories](../05-repositories.md).
+
+The default file name is satis.json but it could be anything you like.
 
 Here is an example configuration, you see that it holds a few VCS repositories,
 but those could be any types of [repositories](../05-repositories.md). Then it
@@ -46,14 +46,14 @@ The default file Satis looks for is `satis.json` in the root of the repository.
 
 ```json
 {
-  "name": "My Repository",
-  "homepage": "http://packages.example.org",
-  "repositories": [
-    { "type": "vcs", "url": "https://github.com/mycompany/privaterepo" },
-    { "type": "vcs", "url": "http://svn.example.org/private/repo" },
-    { "type": "vcs", "url": "https://github.com/mycompany/privaterepo2" }
-  ],
-  "require-all": true
+    "name": "my/repository",
+    "homepage": "http://packages.example.org",
+    "repositories": [
+        { "type": "vcs", "url": "https://github.com/mycompany/privaterepo" },
+        { "type": "vcs", "url": "http://svn.example.org/private/repo" },
+        { "type": "vcs", "url": "https://github.com/mycompany/privaterepo2" }
+    ],
+    "require-all": true
 }
 ```
 
@@ -64,22 +64,24 @@ or another constraint if you want really specific versions.
 
 ```json
 {
-  "repositories": [
-    { "type": "vcs", "url": "https://github.com/mycompany/privaterepo" },
-    { "type": "vcs", "url": "http://svn.example.org/private/repo" },
-    { "type": "vcs", "url": "https://github.com/mycompany/privaterepo2" }
-  ],
-  "require": {
-    "company/package": "*",
-    "company/package2": "*",
-    "company/package3": "2.0.0"
-  }
+    "repositories": [
+        { "type": "vcs", "url": "https://github.com/mycompany/privaterepo" },
+        { "type": "vcs", "url": "http://svn.example.org/private/repo" },
+        { "type": "vcs", "url": "https://github.com/mycompany/privaterepo2" }
+    ],
+    "require": {
+        "company/package": "*",
+        "company/package2": "*",
+        "company/package3": "2.0.0"
+    }
 }
 ```
 
 Once you've done this, you run:
 
-    php bin/satis build <configuration file> <build dir>
+```shell
+php bin/satis build <configuration file> <build dir>
+```
 
 When you ironed out that process, what you would typically do is run this
 command as a cron job on a server. It would then update all your package info
@@ -106,7 +108,9 @@ rebuilds whenever code is pushed into one of your repositories.
 To rebuild only particular packages, pass the package names on the command line
 like so:
 
-    php bin/satis build satis.json web/ this/package that/other-package
+```shell
+php bin/satis build satis.json web/ this/package that/other-package
+```
 
 Note that this will still need to pull and scan all of your VCS repositories
 because any VCS repository might contain (on any branch) one of the selected
@@ -117,18 +121,20 @@ to declare a *name* for all your package (this only work on VCS repositories typ
 
 ```json
 {
-  "repositories": [
-    { "name": "company/privaterepo", "type": "vcs", "url": "https://github.com/mycompany/privaterepo" },
-    { "name": "private/repo", "type": "vcs", "url": "http://svn.example.org/private/repo" },
-    { "name": "mycompany/privaterepo2", "type": "vcs", "url": "https://github.com/mycompany/privaterepo2" }
-  ]
+    "repositories": [
+        { "name": "company/privaterepo", "type": "vcs", "url": "https://github.com/mycompany/privaterepo" },
+        { "name": "private/repo", "type": "vcs", "url": "http://svn.example.org/private/repo" },
+        { "name": "mycompany/privaterepo2", "type": "vcs", "url": "https://github.com/mycompany/privaterepo2" }
+    ]
 }
 ```
 
 If you want to scan only a single repository and update all packages found in
 it, pass the VCS repository URL as an optional argument:
 
-    php bin/satis build --repository-url https://only.my/repo.git satis.json web/
+```shell
+php bin/satis build --repository-url https://only.my/repo.git satis.json web/
+```
 
 ## Usage
 
@@ -140,12 +146,12 @@ will update itself.
 
 ```json
 {
-  "repositories": [ { "type": "composer", "url": "http://packages.example.org/" } ],
-  "require": {
-    "company/package": "1.2.0",
-    "company/package2": "1.5.2",
-    "company/package3": "dev-master"
-  }
+    "repositories": [ { "type": "composer", "url": "http://packages.example.org/" } ],
+    "require": {
+        "company/package": "1.2.0",
+        "company/package2": "1.5.2",
+        "company/package3": "dev-master"
+    }
 }
 ```
 
@@ -159,55 +165,55 @@ Example using a custom repository using SSH (requires the SSH2 PECL extension):
 
 ```json
 {
-  "repositories": [{
-    "type": "composer",
-    "url": "ssh2.sftp://example.org",
-    "options": {
-      "ssh2": {
-        "username": "composer",
-        "pubkey_file": "/home/composer/.ssh/id_rsa.pub",
-        "privkey_file": "/home/composer/.ssh/id_rsa"
-      }
-    }
-  }]
+    "repositories": [{
+        "type": "composer",
+        "url": "ssh2.sftp://example.org",
+        "options": {
+            "ssh2": {
+                "username": "composer",
+                "pubkey_file": "/home/composer/.ssh/id_rsa.pub",
+                "privkey_file": "/home/composer/.ssh/id_rsa"
+            }
+        }
+    }]
 }
 ```
 
-> **Tip:** See [ssh2 context options] for more information.
+> **Tip:** See [ssh2 context options](https://secure.php.net/manual/en/wrappers.ssh2.php#refsect1-wrappers.ssh2-options) for more information.
 
 Example using SSL/TLS (HTTPS) using a client certificate:
 
 ```json
 {
-  "repositories": [{
-     "type": "composer",
-     "url": "https://example.org",
-     "options": {
-       "ssl": {
-         "local_cert": "/home/composer/.ssl/composer.pem"
-       }
-     }
-  }]
+    "repositories": [{
+         "type": "composer",
+         "url": "https://example.org",
+         "options": {
+             "ssl": {
+                 "local_cert": "/home/composer/.ssl/composer.pem"
+             }
+         }
+    }]
 }
 ```
 
-> **Tip:** See [ssl context options] for more information.
+> **Tip:** See [ssl context options](https://secure.php.net/manual/en/context.ssl.php) for more information.
 
 Example using a custom HTTP Header field for token authentication:
 
 ```json
 {
-  "repositories": [{
-    "type": "composer",
-    "url": "https://example.org",
-    "options":  {
-      "http": {
-        "header": [
-          "API-TOKEN: YOUR-API-TOKEN"
-        ]
-      }
-    }
-  }]
+    "repositories": [{
+        "type": "composer",
+        "url": "https://example.org",
+        "options":  {
+            "http": {
+                "header": [
+                    "API-TOKEN: YOUR-API-TOKEN"
+                ]
+            }
+        }
+    }]
 }
 ```
 
@@ -229,14 +235,14 @@ and thus installations usually take a lot longer.
 To enable your satis installation to create downloads for all (Git, Mercurial
 and Subversion) your packages, add the following to your `satis.json`:
 
-``` json
+```json
 {
-  "archive": {
-    "directory": "dist",
-    "format": "tar",
-    "prefix-url": "https://amazing.cdn.example.org",
-    "skip-dev": true
-  }
+    "archive": {
+        "directory": "dist",
+        "format": "tar",
+        "prefix-url": "https://amazing.cdn.example.org",
+        "skip-dev": true
+    }
 }
 ```
 
@@ -274,9 +280,9 @@ Example: A `prefix-url` of `https://my-bucket.s3.amazonaws.com` (and
 ### Web outputs
 
  * `output-html`: optional, `true` by default, when disabled (`false`) satis
-   will not generate the `output-dir`/index.html page.
- * `twig-template`: optional, a path to a personalized [Twig] template for
-   the `output-dir`/index.html page.
+   will not generate the `output-dir/index.html` page.
+ * `twig-template`: optional, a path to a personalized [Twig](https://twig.sensiolabs.org/) template for
+   the `output-dir/index.html` page.
 
 ### Abandoned packages
 
@@ -285,10 +291,10 @@ add the following to your `satis.json`:
 
 ```json
 {
-  "abandoned": {
-    "company/package": true,
-    "company/package2": "company/newpackage"
-  }
+    "abandoned": {
+        "company/package": true,
+        "company/package2": "company/newpackage"
+    }
 }
 ```
 
@@ -307,8 +313,8 @@ complete local mirror of packages. Add the following to your `satis.json`:
 
 ```json
 {
-  "require-dependencies": true,
-  "require-dev-dependencies": true
+    "require-dependencies": true,
+    "require-dev-dependencies": true
 }
 ```
 
@@ -329,12 +335,6 @@ is set to true.
    provided as an argument when calling the `build` command.
  * `config`: optional, lets you define all config options from composer, except
    `archive-format` and `archive-dir` as the configuration is done through
-   [archive](#downloads) instead. See docs on [config schema] for more details.
+   [archive](#downloads) instead. See docs on [config schema](../06-config.md) for more details.
  * `notify-batch`: optional, specify a URL that will be called every time a
-   user installs a package. See [notify-batch].
-
-[ssh2 context options]: https://secure.php.net/manual/en/wrappers.ssh2.php#refsect1-wrappers.ssh2-options
-[ssl context options]: https://secure.php.net/manual/en/context.ssl.php
-[Twig]: https://twig.sensiolabs.org/
-[config schema]: https://getcomposer.org/doc/04-schema.md#config
-[notify-batch]: https://getcomposer.org/doc/05-repositories.md#notify-batch
+   user installs a package. See [notify-batch](../05-repositories.md#notify-batch).

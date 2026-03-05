@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -12,41 +12,49 @@
 
 namespace Composer\Test;
 
+use Composer\Autoload\ClassLoader;
 use Composer\InstalledVersions;
 use Composer\Semver\VersionParser;
 
 class InstalledVersionsTest extends TestCase
 {
+    /** @var array<ClassLoader> */
+    private static $previousRegisteredLoaders;
+
     /**
      * @var string
      */
     private $root;
 
-    public static function setUpBeforeClass()
+    public static function setUpBeforeClass(): void
     {
         // disable multiple-ClassLoader-based checks of InstalledVersions by making it seem like no
         // class loaders are registered
         $prop = new \ReflectionProperty('Composer\Autoload\ClassLoader', 'registeredLoaders');
-        $prop->setAccessible(true);
-        $prop->setValue(array());
+        (\PHP_VERSION_ID < 80100) and $prop->setAccessible(true);
+        self::$previousRegisteredLoaders = $prop->getValue();
+        $prop->setValue(null, []);
     }
 
-    public static function tearDownAfterClass()
+    public static function tearDownAfterClass(): void
     {
-        self::setUpBeforeClass();
+        $prop = new \ReflectionProperty('Composer\Autoload\ClassLoader', 'registeredLoaders');
+        (\PHP_VERSION_ID < 80100) and $prop->setAccessible(true);
+        $prop->setValue(null, self::$previousRegisteredLoaders);
+        InstalledVersions::reload(null); // @phpstan-ignore argument.type
     }
 
-    public function setUp()
+    public function setUp(): void
     {
-        $this->root = $this->getUniqueTmpDirectory();
+        $this->root = self::getUniqueTmpDirectory();
 
         $dir = $this->root;
-        InstalledVersions::reload(require __DIR__.'/Repository/Fixtures/installed.php');
+        InstalledVersions::reload(require __DIR__.'/Repository/Fixtures/installed_relative.php');
     }
 
-    public function testGetInstalledPackages()
+    public function testGetInstalledPackages(): void
     {
-        $names = array(
+        $names = [
             '__root__',
             'a/provider',
             'a/provider2',
@@ -56,220 +64,233 @@ class InstalledVersionsTest extends TestCase
             'foo/impl2',
             'foo/replaced',
             'meta/package',
-        );
-        $this->assertSame($names, InstalledVersions::getInstalledPackages());
+        ];
+        self::assertSame($names, InstalledVersions::getInstalledPackages());
     }
 
     /**
      * @dataProvider isInstalledProvider
-     * @param bool $expected
-     * @param string $name
-     * @param bool $includeDevRequirements
      */
-    public function testIsInstalled($expected, $name, $includeDevRequirements = true)
+    public function testIsInstalled(bool $expected, string $name, bool $includeDevRequirements = true): void
     {
-        $this->assertSame($expected, InstalledVersions::isInstalled($name, $includeDevRequirements));
+        self::assertSame($expected, InstalledVersions::isInstalled($name, $includeDevRequirements));
     }
 
-    public static function isInstalledProvider()
+    public static function isInstalledProvider(): array
     {
-        return array(
-            array(true,  'foo/impl'),
-            array(true,  'foo/replaced'),
-            array(true,  'c/c'),
-            array(false, 'c/c', false),
-            array(true,  '__root__'),
-            array(true,  'b/replacer'),
-            array(false, 'not/there'),
-            array(true,  'meta/package'),
-        );
+        return [
+            [true,  'foo/impl'],
+            [true,  'foo/replaced'],
+            [true,  'c/c'],
+            [false, 'c/c', false],
+            [true,  '__root__'],
+            [true,  'b/replacer'],
+            [false, 'not/there'],
+            [true,  'meta/package'],
+        ];
     }
 
     /**
      * @dataProvider satisfiesProvider
-     * @param bool $expected
-     * @param string $name
-     * @param string $constraint
      */
-    public function testSatisfies($expected, $name, $constraint)
+    public function testSatisfies(bool $expected, string $name, string $constraint): void
     {
-        $this->assertSame($expected, InstalledVersions::satisfies(new VersionParser, $name, $constraint));
+        self::assertSame($expected, InstalledVersions::satisfies(new VersionParser, $name, $constraint));
     }
 
-    public static function satisfiesProvider()
+    public static function satisfiesProvider(): array
     {
-        return array(
-            array(true,  'foo/impl', '1.5'),
-            array(true,  'foo/impl', '1.2'),
-            array(true,  'foo/impl', '^1.0'),
-            array(true,  'foo/impl', '^3 || ^2'),
-            array(false, 'foo/impl', '^3'),
+        return [
+            [true,  'foo/impl', '1.5'],
+            [true,  'foo/impl', '1.2'],
+            [true,  'foo/impl', '^1.0'],
+            [true,  'foo/impl', '^3 || ^2'],
+            [false, 'foo/impl', '^3'],
 
-            array(true,  'foo/replaced', '3.5'),
-            array(true,  'foo/replaced', '^3.2'),
-            array(false,  'foo/replaced', '4.0'),
+            [true,  'foo/replaced', '3.5'],
+            [true,  'foo/replaced', '^3.2'],
+            [false,  'foo/replaced', '4.0'],
 
-            array(true,  'c/c', '3.0.0'),
-            array(true,  'c/c', '^3'),
-            array(false, 'c/c', '^3.1'),
+            [true,  'c/c', '3.0.0'],
+            [true,  'c/c', '^3'],
+            [false, 'c/c', '^3.1'],
 
-            array(true,  '__root__', 'dev-master'),
-            array(true,  '__root__', '^1.10'),
-            array(false, '__root__', '^2'),
+            [true,  '__root__', 'dev-master'],
+            [true,  '__root__', '^1.10'],
+            [false, '__root__', '^2'],
 
-            array(true,  'b/replacer', '^2.1'),
-            array(false, 'b/replacer', '^2.3'),
+            [true,  'b/replacer', '^2.1'],
+            [false, 'b/replacer', '^2.3'],
 
-            array(true,  'a/provider2', '^1.2'),
-            array(true,  'a/provider2', '^1.4'),
-            array(false, 'a/provider2', '^1.5'),
-        );
+            [true,  'a/provider2', '^1.2'],
+            [true,  'a/provider2', '^1.4'],
+            [false, 'a/provider2', '^1.5'],
+        ];
     }
 
     /**
      * @dataProvider getVersionRangesProvider
-     * @param string $expected
-     * @param string $name
      */
-    public function testGetVersionRanges($expected, $name)
+    public function testGetVersionRanges(string $expected, string $name): void
     {
-        $this->assertSame($expected, InstalledVersions::getVersionRanges($name));
+        self::assertSame($expected, InstalledVersions::getVersionRanges($name));
     }
 
-    public static function getVersionRangesProvider()
+    public static function getVersionRangesProvider(): array
     {
-        return array(
-            array('dev-master || 1.10.x-dev',   '__root__'),
-            array('^1.1 || 1.2 || 1.4 || 2.0',  'foo/impl'),
-            array('2.2 || 2.0',                 'foo/impl2'),
-            array('^3.0',                       'foo/replaced'),
-            array('1.1',                        'a/provider'),
-            array('1.2 || 1.4',                 'a/provider2'),
-            array('2.2',                        'b/replacer'),
-            array('3.0',                        'c/c'),
-        );
+        return [
+            ['dev-master || 1.10.x-dev',   '__root__'],
+            ['^1.1 || 1.2 || 1.4 || 2.0',  'foo/impl'],
+            ['2.2 || 2.0',                 'foo/impl2'],
+            ['^3.0',                       'foo/replaced'],
+            ['1.1',                        'a/provider'],
+            ['1.2 || 1.4',                 'a/provider2'],
+            ['2.2',                        'b/replacer'],
+            ['3.0',                        'c/c'],
+        ];
     }
 
     /**
      * @dataProvider getVersionProvider
-     * @param ?string $expected
-     * @param string $name
      */
-    public function testGetVersion($expected, $name)
+    public function testGetVersion(?string $expected, string $name): void
     {
-        $this->assertSame($expected, InstalledVersions::getVersion($name));
+        self::assertSame($expected, InstalledVersions::getVersion($name));
     }
 
-    public static function getVersionProvider()
+    public static function getVersionProvider(): array
     {
-        return array(
-            array('dev-master',  '__root__'),
-            array(null, 'foo/impl'),
-            array(null, 'foo/impl2'),
-            array(null, 'foo/replaced'),
-            array('1.1.0.0', 'a/provider'),
-            array('1.2.0.0', 'a/provider2'),
-            array('2.2.0.0', 'b/replacer'),
-            array('3.0.0.0', 'c/c'),
-        );
+        return [
+            ['dev-master',  '__root__'],
+            [null, 'foo/impl'],
+            [null, 'foo/impl2'],
+            [null, 'foo/replaced'],
+            ['1.1.0.0', 'a/provider'],
+            ['1.2.0.0', 'a/provider2'],
+            ['2.2.0.0', 'b/replacer'],
+            ['3.0.0.0', 'c/c'],
+        ];
     }
 
     /**
      * @dataProvider getPrettyVersionProvider
-     * @param ?string $expected
-     * @param string $name
      */
-    public function testGetPrettyVersion($expected, $name)
+    public function testGetPrettyVersion(?string $expected, string $name): void
     {
-        $this->assertSame($expected, InstalledVersions::getPrettyVersion($name));
+        self::assertSame($expected, InstalledVersions::getPrettyVersion($name));
     }
 
-    public static function getPrettyVersionProvider()
+    public static function getPrettyVersionProvider(): array
     {
-        return array(
-            array('dev-master',  '__root__'),
-            array(null, 'foo/impl'),
-            array(null, 'foo/impl2'),
-            array(null, 'foo/replaced'),
-            array('1.1', 'a/provider'),
-            array('1.2', 'a/provider2'),
-            array('2.2', 'b/replacer'),
-            array('3.0', 'c/c'),
-        );
+        return [
+            ['dev-master',  '__root__'],
+            [null, 'foo/impl'],
+            [null, 'foo/impl2'],
+            [null, 'foo/replaced'],
+            ['1.1', 'a/provider'],
+            ['1.2', 'a/provider2'],
+            ['2.2', 'b/replacer'],
+            ['3.0', 'c/c'],
+        ];
     }
 
-    public function testGetVersionOutOfBounds()
+    public function testGetVersionOutOfBounds(): void
     {
-        $this->setExpectedException('OutOfBoundsException');
+        self::expectException('OutOfBoundsException');
         InstalledVersions::getVersion('not/installed');
     }
 
-    public function testGetRootPackage()
+    public function testGetRootPackage(): void
     {
-        $this->assertSame(array(
+        self::assertSame([
+            'name' => '__root__',
             'pretty_version' => 'dev-master',
             'version' => 'dev-master',
+            'reference' => 'sourceref-by-default',
             'type' => 'library',
             'install_path' => $this->root . '/./',
-            'aliases' => array(
+            'aliases' => [
                 '1.10.x-dev',
-            ),
-            'reference' => 'sourceref-by-default',
-            'name' => '__root__',
+            ],
             'dev' => true,
-        ), InstalledVersions::getRootPackage());
+        ], InstalledVersions::getRootPackage());
     }
 
     /**
      * @group legacy
      */
-    public function testGetRawData()
+    public function testGetRawData(): void
     {
         $dir = $this->root;
-        $this->assertSame(require __DIR__.'/Repository/Fixtures/installed.php', InstalledVersions::getRawData());
+        self::assertSame(require __DIR__.'/Repository/Fixtures/installed_relative.php', InstalledVersions::getRawData());
     }
 
     /**
      * @dataProvider getReferenceProvider
-     * @param ?string $expected
-     * @param string $name
      */
-    public function testGetReference($expected, $name)
+    public function testGetReference(?string $expected, string $name): void
     {
-        $this->assertSame($expected, InstalledVersions::getReference($name));
+        self::assertSame($expected, InstalledVersions::getReference($name));
     }
 
-    public static function getReferenceProvider()
+    public static function getReferenceProvider(): array
     {
-        return array(
-            array('sourceref-by-default',  '__root__'),
-            array(null, 'foo/impl'),
-            array(null, 'foo/impl2'),
-            array(null, 'foo/replaced'),
-            array('distref-as-no-source', 'a/provider'),
-            array('distref-as-installed-from-dist', 'a/provider2'),
-            array(null, 'b/replacer'),
-            array(null, 'c/c'),
-        );
+        return [
+            ['sourceref-by-default',  '__root__'],
+            [null, 'foo/impl'],
+            [null, 'foo/impl2'],
+            [null, 'foo/replaced'],
+            ['distref-as-no-source', 'a/provider'],
+            ['distref-as-installed-from-dist', 'a/provider2'],
+            [null, 'b/replacer'],
+            [null, 'c/c'],
+        ];
     }
 
-    public function testGetInstalledPackagesByType()
+    public function testGetInstalledPackagesByType(): void
     {
-        $names = array(
+        $names = [
             '__root__',
             'a/provider',
             'a/provider2',
             'b/replacer',
             'c/c',
-        );
+        ];
 
-        $this->assertSame($names, \Composer\InstalledVersions::getInstalledPackagesByType('library'));
+        self::assertSame($names, InstalledVersions::getInstalledPackagesByType('library'));
     }
 
-    public function testGetInstallPath()
+    public function testGetInstallPath(): void
     {
-        $this->assertSame(realpath($this->root), realpath(\Composer\InstalledVersions::getInstallPath('__root__')));
-        $this->assertSame('/foo/bar/vendor/c/c', \Composer\InstalledVersions::getInstallPath('c/c'));
-        $this->assertNull(\Composer\InstalledVersions::getInstallPath('foo/impl'));
+        self::assertSame(realpath($this->root), realpath(InstalledVersions::getInstallPath('__root__')));
+        self::assertSame('/foo/bar/vendor/c/c', InstalledVersions::getInstallPath('c/c'));
+        self::assertNull(InstalledVersions::getInstallPath('foo/impl'));
+    }
+
+    public function testWithClassLoaderLoaded(): void
+    {
+        // disable multiple-ClassLoader-based checks of InstalledVersions by making it seem like no
+        // class loaders are registered
+        $prop = new \ReflectionProperty(ClassLoader::class, 'registeredLoaders');
+        (\PHP_VERSION_ID < 80100) and $prop->setAccessible(true);
+        $prop->setValue(null, array_slice(self::$previousRegisteredLoaders, 0, 1, true));
+
+        $prop2 = new \ReflectionProperty(InstalledVersions::class, 'installedIsLocalDir');
+        (\PHP_VERSION_ID < 80100) and $prop2->setAccessible(true);
+        $prop2->setValue(null, true);
+
+        self::assertFalse(InstalledVersions::isInstalled('foo/bar'));
+        InstalledVersions::reload([
+            'root' => InstalledVersions::getRootPackage(),
+            'versions' => [
+                'foo/bar' => [
+                    'version' => '1.0.0',
+                    'dev_requirement' => false,
+                ],
+            ],
+        ]);
+        self::assertTrue(InstalledVersions::isInstalled('foo/bar'));
+
+        $prop->setValue(null, []);
     }
 }

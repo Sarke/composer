@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -15,12 +15,13 @@ namespace Composer\IO;
 use Composer\Config;
 use Composer\Pcre\Preg;
 use Composer\Util\ProcessExecutor;
+use Composer\Util\Silencer;
 use Psr\Log\LogLevel;
 
 abstract class BaseIO implements IOInterface
 {
-    /** @var array<string, array{username: string, password: string}> */
-    protected $authentications = array();
+    /** @var array<string, array{username: string|null, password: string|null}> */
+    protected $authentications = [];
 
     /**
      * @inheritDoc
@@ -35,7 +36,7 @@ abstract class BaseIO implements IOInterface
      */
     public function resetAuthentications()
     {
-        $this->authentications = array();
+        $this->authentications = [];
     }
 
     /**
@@ -55,7 +56,7 @@ abstract class BaseIO implements IOInterface
             return $this->authentications[$repositoryName];
         }
 
-        return array('username' => null, 'password' => null);
+        return ['username' => null, 'password' => null];
     }
 
     /**
@@ -63,13 +64,13 @@ abstract class BaseIO implements IOInterface
      */
     public function setAuthentication($repositoryName, $username, $password = null)
     {
-        $this->authentications[$repositoryName] = array('username' => $username, 'password' => $password);
+        $this->authentications[$repositoryName] = ['username' => $username, 'password' => $password];
     }
 
     /**
      * @inheritDoc
      */
-    public function writeRaw($messages, $newline = true, $verbosity = self::NORMAL)
+    public function writeRaw($messages, bool $newline = true, int $verbosity = self::NORMAL)
     {
         $this->write($messages, $newline, $verbosity);
     }
@@ -77,7 +78,7 @@ abstract class BaseIO implements IOInterface
     /**
      * @inheritDoc
      */
-    public function writeErrorRaw($messages, $newline = true, $verbosity = self::NORMAL)
+    public function writeErrorRaw($messages, bool $newline = true, int $verbosity = self::NORMAL)
     {
         $this->writeError($messages, $newline, $verbosity);
     }
@@ -91,7 +92,7 @@ abstract class BaseIO implements IOInterface
      *
      * @return void
      */
-    protected function checkAndSetAuthentication($repositoryName, $username, $password = null)
+    protected function checkAndSetAuthentication(string $repositoryName, string $username, ?string $password = null)
     {
         if ($this->hasAuthentication($repositoryName)) {
             $auth = $this->getAuthentication($repositoryName);
@@ -114,12 +115,15 @@ abstract class BaseIO implements IOInterface
      */
     public function loadConfiguration(Config $config)
     {
-        $bitbucketOauth = $config->get('bitbucket-oauth') ?: array();
-        $githubOauth = $config->get('github-oauth') ?: array();
-        $gitlabOauth = $config->get('gitlab-oauth') ?: array();
-        $gitlabToken = $config->get('gitlab-token') ?: array();
-        $httpBasic = $config->get('http-basic') ?: array();
-        $bearerToken = $config->get('bearer') ?: array();
+        $bitbucketOauth = $config->get('bitbucket-oauth');
+        $githubOauth = $config->get('github-oauth');
+        $gitlabOauth = $config->get('gitlab-oauth');
+        $gitlabToken = $config->get('gitlab-token');
+        $forgejoToken = $config->get('forgejo-token');
+        $httpBasic = $config->get('http-basic');
+        $bearerToken = $config->get('bearer');
+        $customHeaders = $config->get('custom-headers');
+        $clientCertificate = $config->get('client-certificate');
 
         // reload oauth tokens from config if available
 
@@ -128,6 +132,11 @@ abstract class BaseIO implements IOInterface
         }
 
         foreach ($githubOauth as $domain => $token) {
+            if ($domain !== 'github.com' && !in_array($domain, $config->get('github-domains'), true)) {
+                $this->debug($domain.' is not in the configured github-domains, adding it implicitly as authentication is configured for this domain');
+                $config->merge(['config' => ['github-domains' => array_merge($config->get('github-domains'), [$domain])]], 'implicit-due-to-auth');
+            }
+
             // allowed chars for GH tokens are from https://github.blog/changelog/2021-03-04-authentication-token-format-updates/
             // plus dots which were at some point used for GH app integration tokens
             if (!Preg::isMatch('{^[.A-Za-z0-9_]+$}', $token)) {
@@ -137,13 +146,33 @@ abstract class BaseIO implements IOInterface
         }
 
         foreach ($gitlabOauth as $domain => $token) {
+            if ($domain !== 'gitlab.com' && !in_array($domain, $config->get('gitlab-domains'), true)) {
+                $this->debug($domain.' is not in the configured gitlab-domains, adding it implicitly as authentication is configured for this domain');
+                $config->merge(['config' => ['gitlab-domains' => array_merge($config->get('gitlab-domains'), [$domain])]], 'implicit-due-to-auth');
+            }
+
+            $token = is_array($token) ? $token["token"] : $token;
             $this->checkAndSetAuthentication($domain, $token, 'oauth2');
         }
 
         foreach ($gitlabToken as $domain => $token) {
-            $username = is_array($token) && array_key_exists("username", $token) ? $token["username"] : $token;
-            $password = is_array($token) && array_key_exists("token", $token) ? $token["token"] : 'private-token';
+            if ($domain !== 'gitlab.com' && !in_array($domain, $config->get('gitlab-domains'), true)) {
+                $this->debug($domain.' is not in the configured gitlab-domains, adding it implicitly as authentication is configured for this domain');
+                $config->merge(['config' => ['gitlab-domains' => array_merge($config->get('gitlab-domains'), [$domain])]], 'implicit-due-to-auth');
+            }
+
+            $username = is_array($token) ? $token["username"] : $token;
+            $password = is_array($token) ? $token["token"] : 'private-token';
             $this->checkAndSetAuthentication($domain, $username, $password);
+        }
+
+        foreach ($forgejoToken as $domain => $cred) {
+            if (!in_array($domain, $config->get('forgejo-domains'), true)) {
+                $this->debug($domain.' is not in the configured forgejo-domains, adding it implicitly as authentication is configured for this domain');
+                $config->merge(['config' => ['forgejo-domains' => array_merge($config->get('forgejo-domains'), [$domain])]], 'implicit-due-to-auth');
+            }
+
+            $this->checkAndSetAuthentication($domain, $cred['username'], $cred['token']);
         }
 
         // reload http basic credentials from config if available
@@ -155,80 +184,119 @@ abstract class BaseIO implements IOInterface
             $this->checkAndSetAuthentication($domain, $token, 'bearer');
         }
 
+        // load custom HTTP headers from config
+        foreach ($customHeaders as $domain => $headers) {
+            if ($headers !== null) {
+                $this->checkAndSetAuthentication($domain, (string) json_encode($headers), 'custom-headers');
+            }
+        }
+
+        // reload ssl client certificate credentials from config if available
+        foreach ($clientCertificate as $domain => $cred) {
+            $sslOptions = array_filter(
+                [
+                    'local_cert' => $cred['local_cert'] ?? null,
+                    'local_pk' => $cred['local_pk'] ?? null,
+                    'passphrase' => $cred['passphrase'] ?? null,
+                ],
+                static function (?string $value): bool { return $value !== null; }
+            );
+            if (!isset($sslOptions['local_cert'])) {
+                $this->writeError(
+                    sprintf(
+                        '<warning>Warning: Client certificate configuration is missing key `local_cert` for %s.</warning>',
+                        $domain
+                    )
+                );
+                continue;
+            }
+            $this->checkAndSetAuthentication($domain, 'client-certificate', (string) json_encode($sslOptions));
+        }
+
         // setup process timeout
-        ProcessExecutor::setTimeout((int) $config->get('process-timeout'));
+        ProcessExecutor::setTimeout($config->get('process-timeout'));
     }
 
     /**
-     * @inheritDoc
+     * @param string|\Stringable $message
      */
-    public function emergency($message, array $context = array())
+    public function emergency($message, array $context = []): void
     {
         $this->log(LogLevel::EMERGENCY, $message, $context);
     }
 
     /**
-     * @inheritDoc
+     * @param string|\Stringable $message
      */
-    public function alert($message, array $context = array())
+    public function alert($message, array $context = []): void
     {
         $this->log(LogLevel::ALERT, $message, $context);
     }
 
     /**
-     * @inheritDoc
+     * @param string|\Stringable $message
      */
-    public function critical($message, array $context = array())
+    public function critical($message, array $context = []): void
     {
         $this->log(LogLevel::CRITICAL, $message, $context);
     }
 
     /**
-     * @inheritDoc
+     * @param string|\Stringable $message
      */
-    public function error($message, array $context = array())
+    public function error($message, array $context = []): void
     {
         $this->log(LogLevel::ERROR, $message, $context);
     }
 
     /**
-     * @inheritDoc
+     * @param string|\Stringable $message
      */
-    public function warning($message, array $context = array())
+    public function warning($message, array $context = []): void
     {
         $this->log(LogLevel::WARNING, $message, $context);
     }
 
     /**
-     * @inheritDoc
+     * @param string|\Stringable $message
      */
-    public function notice($message, array $context = array())
+    public function notice($message, array $context = []): void
     {
         $this->log(LogLevel::NOTICE, $message, $context);
     }
 
     /**
-     * @inheritDoc
+     * @param string|\Stringable $message
      */
-    public function info($message, array $context = array())
+    public function info($message, array $context = []): void
     {
         $this->log(LogLevel::INFO, $message, $context);
     }
 
     /**
-     * @inheritDoc
+     * @param string|\Stringable $message
      */
-    public function debug($message, array $context = array())
+    public function debug($message, array $context = []): void
     {
         $this->log(LogLevel::DEBUG, $message, $context);
     }
 
     /**
-     * @inheritDoc
+     * @param mixed|LogLevel::* $level
+     * @param string|\Stringable $message
      */
-    public function log($level, $message, array $context = array())
+    public function log($level, $message, array $context = []): void
     {
-        if (in_array($level, array(LogLevel::EMERGENCY, LogLevel::ALERT, LogLevel::CRITICAL, LogLevel::ERROR))) {
+        $message = (string) $message;
+
+        if ($context !== []) {
+            $json = Silencer::call('json_encode', $context, JSON_INVALID_UTF8_IGNORE | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            if ($json !== false) {
+                $message .= ' ' . $json;
+            }
+        }
+
+        if (in_array($level, [LogLevel::EMERGENCY, LogLevel::ALERT, LogLevel::CRITICAL, LogLevel::ERROR])) {
             $this->writeError('<error>'.$message.'</error>');
         } elseif ($level === LogLevel::WARNING) {
             $this->writeError('<warning>'.$message.'</warning>');

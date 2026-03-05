@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -16,54 +16,70 @@ use Composer\Util\Platform;
 use ZipArchive;
 use Composer\Package\Archiver\ZipArchiver;
 
-class ZipArchiverTest extends ArchiverTest
+class ZipArchiverTest extends ArchiverTestCase
 {
+    /** @var list<string> */
+    private $filesToCleanup = [];
+
+    public function testSimpleFiles(): void
+    {
+        $files = [
+            'file.txt' => null,
+            'foo/bar/baz' => null,
+            'x/baz' => null,
+            'x/includeme' => null,
+        ];
+
+        if (!Platform::isWindows()) {
+            $files['zfoo' . Platform::getCwd() . '/file.txt'] = null;
+        }
+
+        $this->assertZipArchive($files);
+    }
+
     /**
-     * @param string $include
-     *
      * @dataProvider provideGitignoreExcludeNegationTestCases
      */
-    public function testGitignoreExcludeNegation($include)
+    public function testGitignoreExcludeNegation(string $include): void
     {
-        $this->testZipArchive(array(
-            'docs/README.md' => '# The doc',
+        $this->assertZipArchive([
             '.gitignore' => "/*\n.*\n!.git*\n$include",
-        ));
+            'docs/README.md' => '# The doc',
+        ]);
     }
 
-    public function provideGitignoreExcludeNegationTestCases()
+    public static function provideGitignoreExcludeNegationTestCases(): array
     {
-        return array(
-            array('!/docs'),
-            array('!/docs/'),
-        );
+        return [
+            ['!/docs'],
+            ['!/docs/'],
+        ];
+    }
+
+    public function testFolderWithBackslashes(): void
+    {
+        if (Platform::isWindows()) {
+            $this->markTestSkipped('Folder names cannot contain backslashes on Windows.');
+        }
+
+        $this->assertZipArchive([
+            'folder\with\backslashes/README.md' => '# doc',
+        ]);
     }
 
     /**
-     * @param array<string, string> $files
+     * @param array<string, string|null> $files
      */
-    public function testZipArchive(array $files = array())
+    protected function assertZipArchive(array $files): void
     {
         if (!class_exists('ZipArchive')) {
             $this->markTestSkipped('Cannot run ZipArchiverTest, missing class "ZipArchive".');
         }
 
-        if (empty($files)) {
-            $files = array(
-                'file.txt' => null,
-                'foo/bar/baz' => null,
-                'x/baz' => null,
-                'x/includeme' => null,
-            );
-
-            if (!Platform::isWindows()) {
-                $files['foo' . getcwd() . '/file.txt'] = null;
-            }
-        }
         // Set up repository
         $this->setupDummyRepo($files);
         $package = $this->setupPackage();
-        $target = sys_get_temp_dir().'/composer_archiver_test.zip';
+        $target = $this->filesToCleanup[] = sys_get_temp_dir().'/composer_archiver_test.zip';
 
         // Test archive
         $archiver = new ZipArchiver();
@@ -72,24 +88,30 @@ class ZipArchiverTest extends ArchiverTest
         $zip = new ZipArchive();
         $res = $zip->open($target);
         static::assertTrue($res, 'Failed asserting that Zip file can be opened');
-        foreach ($files as $path => $content) {
-            static::assertSame($content, $zip->getFromName($path), 'Failed asserting that Zip contains ' . $path);
+
+        $zipContents = [];
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $path = $zip->getNameIndex($i);
+            static::assertIsString($path);
+            $zipContents[$path] = $zip->getFromName($path);
         }
         $zip->close();
 
-        unlink($target);
+        static::assertSame(
+            $files,
+            $zipContents,
+            'Failed asserting that Zip created with the ZipArchiver contains all files from the repository.'
+        );
     }
 
     /**
      * Create a local dummy repository to run tests against!
      *
      * @param array<string, string|null> $files
-     *
-     * @return void
      */
-    protected function setupDummyRepo(array &$files)
+    protected function setupDummyRepo(array &$files): void
     {
-        $currentWorkDir = getcwd();
+        $currentWorkDir = Platform::getCwd();
         chdir($this->testDir);
         foreach ($files as $path => $content) {
             if ($files[$path] === null) {
@@ -101,14 +123,7 @@ class ZipArchiverTest extends ArchiverTest
         chdir($currentWorkDir);
     }
 
-    /**
-     * @param string $path
-     * @param string $content
-     * @param string $currentWorkDir
-     *
-     * @return void
-     */
-    protected function writeFile($path, $content, $currentWorkDir)
+    protected function writeFile(string $path, string $content, string $currentWorkDir): void
     {
         if (!file_exists(dirname($path))) {
             mkdir(dirname($path), 0777, true);
@@ -119,5 +134,13 @@ class ZipArchiverTest extends ArchiverTest
             chdir($currentWorkDir);
             throw new \RuntimeException('Could not save file.');
         }
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ($this->filesToCleanup as $file) {
+            unlink($file);
+        }
+        parent::tearDown();
     }
 }

@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -14,18 +14,19 @@ namespace Composer\Command;
 
 use Composer\Config\JsonConfigSource;
 use Composer\DependencyResolver\Request;
-use Composer\Filter\PlatformRequirementFilter\PlatformRequirementFilterFactory;
 use Composer\Installer;
 use Composer\Pcre\Preg;
 use Composer\Plugin\CommandEvent;
 use Composer\Plugin\PluginEvents;
 use Composer\Json\JsonFile;
 use Composer\Factory;
+use Symfony\Component\Console\Exception\InvalidArgumentException;
 use Symfony\Component\Console\Input\InputInterface;
-use Symfony\Component\Console\Input\InputOption;
-use Symfony\Component\Console\Input\InputArgument;
+use Composer\Console\Input\InputOption;
+use Composer\Console\Input\InputArgument;
 use Symfony\Component\Console\Output\OutputInterface;
 use Composer\Package\BasePackage;
+use Composer\Advisory\Auditor;
 
 /**
  * @author Pierre du Plessis <pdples@gmail.com>
@@ -33,27 +34,30 @@ use Composer\Package\BasePackage;
  */
 class RemoveCommand extends BaseCommand
 {
-    /**
-     * @return void
-     */
-    protected function configure()
+    use CompletionTrait;
+
+    protected function configure(): void
     {
         $this
             ->setName('remove')
-            ->setDescription('Removes a package from the require or require-dev.')
-            ->setDefinition(array(
-                new InputArgument('packages', InputArgument::IS_ARRAY | InputArgument::REQUIRED, 'Packages that should be removed.'),
+            ->setAliases(['rm', 'uninstall'])
+            ->setDescription('Removes a package from the require or require-dev')
+            ->setDefinition([
+                new InputArgument('packages', InputArgument::IS_ARRAY, 'Packages that should be removed.', null, $this->suggestRootRequirement()),
                 new InputOption('dev', null, InputOption::VALUE_NONE, 'Removes a package from the require-dev section.'),
                 new InputOption('dry-run', null, InputOption::VALUE_NONE, 'Outputs the operations but will not execute anything (implicitly enables --verbose).'),
                 new InputOption('no-progress', null, InputOption::VALUE_NONE, 'Do not output download progress.'),
                 new InputOption('no-update', null, InputOption::VALUE_NONE, 'Disables the automatic update of the dependencies (implies --no-install).'),
                 new InputOption('no-install', null, InputOption::VALUE_NONE, 'Skip the install step after updating the composer.lock file.'),
-                new InputOption('no-scripts', null, InputOption::VALUE_NONE, 'Skips the execution of all scripts defined in composer.json file.'),
+                new InputOption('no-audit', null, InputOption::VALUE_NONE, 'Skip the audit step after updating the composer.lock file (can also be set via the COMPOSER_NO_AUDIT=1 env var).'),
+                new InputOption('audit-format', null, InputOption::VALUE_REQUIRED, 'Audit output format. Must be "table", "plain", "json", or "summary".', Auditor::FORMAT_SUMMARY, Auditor::FORMATS),
+                new InputOption('no-security-blocking', null, InputOption::VALUE_NONE, 'Allows installing packages with security advisories or that are abandoned (can also be set via the COMPOSER_NO_SECURITY_BLOCKING=1 env var).'),
                 new InputOption('update-no-dev', null, InputOption::VALUE_NONE, 'Run the dependency update with the --no-dev option.'),
-                new InputOption('update-with-dependencies', 'w', InputOption::VALUE_NONE, 'Allows inherited dependencies to be updated with explicit dependencies. (Deprecrated, is now default behavior)'),
-                new InputOption('update-with-all-dependencies', 'W', InputOption::VALUE_NONE, 'Allows all inherited dependencies to be updated, including those that are root requirements.'),
+                new InputOption('update-with-dependencies', 'w', InputOption::VALUE_NONE, 'Allows inherited dependencies to be updated with explicit dependencies (can also be set via the COMPOSER_WITH_DEPENDENCIES=1 env var). (Deprecated, is now default behavior)'),
+                new InputOption('update-with-all-dependencies', 'W', InputOption::VALUE_NONE, 'Allows all inherited dependencies to be updated, including those that are root requirements (can also be set via the COMPOSER_WITH_ALL_DEPENDENCIES=1 env var).'),
                 new InputOption('with-all-dependencies', null, InputOption::VALUE_NONE, 'Alias for --update-with-all-dependencies'),
                 new InputOption('no-update-with-dependencies', null, InputOption::VALUE_NONE, 'Does not allow inherited dependencies to be updated with explicit dependencies.'),
+                new InputOption('minimal-changes', 'm', InputOption::VALUE_NONE, 'During an update with -w/-W, only perform absolutely necessary changes to transitive dependencies (can also be set via the COMPOSER_MINIMAL_CHANGES=1 env var).'),
                 new InputOption('unused', null, InputOption::VALUE_NONE, 'Remove all packages which are locked but not required by any other package.'),
                 new InputOption('ignore-platform-req', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'Ignore a specific platform requirement (php & ext- packages).'),
                 new InputOption('ignore-platform-reqs', null, InputOption::VALUE_NONE, 'Ignore all platform requirements (php & ext- packages).'),
@@ -61,7 +65,7 @@ class RemoveCommand extends BaseCommand
                 new InputOption('classmap-authoritative', 'a', InputOption::VALUE_NONE, 'Autoload classes from the classmap only. Implicitly enables `--optimize-autoloader`.'),
                 new InputOption('apcu-autoloader', null, InputOption::VALUE_NONE, 'Use APCu to cache found/not-found classes.'),
                 new InputOption('apcu-autoloader-prefix', null, InputOption::VALUE_REQUIRED, 'Use a custom prefix for the APCu autoloader cache. Implicitly enables --apcu-autoloader'),
-            ))
+            ])
             ->setHelp(
                 <<<EOT
 The <info>remove</info> command removes a package from the current
@@ -69,19 +73,26 @@ list of installed packages
 
 <info>php composer.phar remove</info>
 
-Read more at https://getcomposer.org/doc/03-cli.md#remove
+Read more at https://getcomposer.org/doc/03-cli.md#remove-rm
 EOT
             )
         ;
     }
 
     /**
-     * @return void
+     * @throws \Seld\JsonLint\ParsingException
      */
-    protected function interact(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        if ($input->getArgument('packages') === [] && !$input->getOption('unused')) {
+            throw new InvalidArgumentException('Not enough arguments (missing: "packages").');
+        }
+
+        $packages = $input->getArgument('packages');
+        $packages = array_map('strtolower', $packages);
+
         if ($input->getOption('unused')) {
-            $composer = $this->getComposer();
+            $composer = $this->requireComposer();
             $locker = $composer->getLocker();
             if (!$locker->isLocked()) {
                 throw new \UnexpectedValueException('A valid composer.lock file is required to run this command with --unused');
@@ -89,7 +100,7 @@ EOT
 
             $lockedPackages = $locker->getLockedRepository()->getPackages();
 
-            $required = array();
+            $required = [];
             foreach (array_merge($composer->getPackage()->getRequires(), $composer->getPackage()->getDevRequires()) as $link) {
                 $required[$link->getTarget()] = true;
             }
@@ -110,33 +121,23 @@ EOT
                 }
             } while ($found);
 
-            $unused = array();
+            $unused = [];
             foreach ($lockedPackages as $package) {
                 $unused[] = $package->getName();
             }
-            $input->setArgument('packages', array_merge($input->getArgument('packages'), $unused));
+            $packages = array_merge($packages, $unused);
 
-            if (!$input->getArgument('packages')) {
+            if (count($packages) === 0) {
                 $this->getIO()->writeError('<info>No unused packages to remove</info>');
-                $this->setCode(function () {
-                    return 0;
-                });
+
+                return 0;
             }
         }
-    }
-
-    /**
-     * @return int
-     * @throws \Seld\JsonLint\ParsingException
-     */
-    protected function execute(InputInterface $input, OutputInterface $output)
-    {
-        $packages = $input->getArgument('packages');
-        $packages = array_map('strtolower', $packages);
 
         $file = Factory::getComposerFile();
 
         $jsonFile = new JsonFile($file);
+        /** @var array{require?: array<string, string>, require-dev?: array<string, string>} $composer */
         $composer = $jsonFile->read();
         $composerBackup = file_get_contents($jsonFile->getPath());
 
@@ -151,7 +152,7 @@ EOT
         }
 
         // make sure name checks are done case insensitively
-        foreach (array('require', 'require-dev') as $linkType) {
+        foreach (['require', 'require-dev'] as $linkType) {
             if (isset($composer[$linkType])) {
                 foreach ($composer[$linkType] as $name => $version) {
                     $composer[$linkType][strtolower($name)] = $name;
@@ -160,7 +161,7 @@ EOT
         }
 
         $dryRun = $input->getOption('dry-run');
-        $toRemove = array();
+        $toRemove = [];
         foreach ($packages as $package) {
             if (isset($composer[$type][$package])) {
                 if ($dryRun) {
@@ -179,7 +180,7 @@ EOT
                         }
                     }
                 }
-            } elseif (isset($composer[$type]) && $matches = Preg::grep(BasePackage::packageNameToRegexp($package), array_keys($composer[$type]))) {
+            } elseif (isset($composer[$type]) && count($matches = Preg::grep(BasePackage::packageNameToRegexp($package), array_keys($composer[$type]))) > 0) {
                 foreach ($matches as $matchedPackage) {
                     if ($dryRun) {
                         $toRemove[$type][] = $matchedPackage;
@@ -187,7 +188,7 @@ EOT
                         $json->removeLink($type, $matchedPackage);
                     }
                 }
-            } elseif (isset($composer[$altType]) && $matches = Preg::grep(BasePackage::packageNameToRegexp($package), array_keys($composer[$altType]))) {
+            } elseif (isset($composer[$altType]) && count($matches = Preg::grep(BasePackage::packageNameToRegexp($package), array_keys($composer[$altType]))) > 0) {
                 foreach ($matches as $matchedPackage) {
                     $io->writeError('<warning>' . $matchedPackage . ' could not be found in ' . $type . ' but it is present in ' . $altType . '</warning>');
                     if ($io->isInteractive()) {
@@ -211,21 +212,20 @@ EOT
             return 0;
         }
 
-        if ($composer = $this->getComposer(false)) {
+        if ($composer = $this->tryComposer()) {
             $composer->getPluginManager()->deactivateInstalledPlugins();
         }
 
         // Update packages
         $this->resetComposer();
-        $composer = $this->getComposer(true, $input->getOption('no-plugins'));
-        $composer->getEventDispatcher()->setRunScripts(!$input->getOption('no-scripts'));
+        $composer = $this->requireComposer();
 
         if ($dryRun) {
             $rootPackage = $composer->getPackage();
-            $links = array(
+            $links = [
                 'require' => $rootPackage->getRequires(),
                 'require-dev' => $rootPackage->getDevRequires(),
-            );
+            ];
             foreach ($toRemove as $type => $names) {
                 foreach ($names as $name) {
                     unset($links[$type][$name]);
@@ -238,6 +238,18 @@ EOT
         $commandEvent = new CommandEvent(PluginEvents::COMMAND, 'remove', $input, $output);
         $composer->getEventDispatcher()->dispatch($commandEvent->getName(), $commandEvent);
 
+        $allowPlugins = $composer->getConfig()->get('allow-plugins');
+        $removedPlugins = is_array($allowPlugins) ? array_intersect(array_keys($allowPlugins), $packages) : [];
+        if (!$dryRun && is_array($allowPlugins) && count($removedPlugins) > 0) {
+            if (count($allowPlugins) === count($removedPlugins)) {
+                $json->removeConfigSetting('allow-plugins');
+            } else {
+                foreach ($removedPlugins as $plugin) {
+                    $json->removeConfigSetting('allow-plugins.'.$plugin);
+                }
+            }
+        }
+
         $composer->getInstallationManager()->setOutputProgress(!$input->getOption('no-progress'));
 
         $install = Installer::create($io, $composer);
@@ -247,6 +259,7 @@ EOT
         $authoritative = $input->getOption('classmap-authoritative') || $composer->getConfig()->get('classmap-authoritative');
         $apcuPrefix = $input->getOption('apcu-autoloader-prefix');
         $apcu = $apcuPrefix !== null || $input->getOption('apcu-autoloader') || $composer->getConfig()->get('apcu-autoloader');
+        $minimalChanges = $input->getOption('minimal-changes') || $composer->getConfig()->get('update-with-minimal-changes');
 
         $updateAllowTransitiveDependencies = Request::UPDATE_LISTED_WITH_TRANSITIVE_DEPS_NO_ROOT_REQUIRE;
         $flags = '';
@@ -260,8 +273,6 @@ EOT
 
         $io->writeError('<info>Running composer update '.implode(' ', $packages).$flags.'</info>');
 
-        $ignorePlatformReqs = $input->getOption('ignore-platform-reqs') ?: ($input->getOption('ignore-platform-req') ?: false);
-
         $install
             ->setVerbose($input->getOption('verbose'))
             ->setDevMode($updateDevMode)
@@ -271,8 +282,10 @@ EOT
             ->setUpdate(true)
             ->setInstall(!$input->getOption('no-install'))
             ->setUpdateAllowTransitiveDependencies($updateAllowTransitiveDependencies)
-            ->setPlatformRequirementFilter(PlatformRequirementFilterFactory::fromBoolOrList($ignorePlatformReqs))
+            ->setPlatformRequirementFilter($this->getPlatformRequirementFilter($input))
             ->setDryRun($dryRun)
+            ->setAuditConfig($this->createAuditConfig($composer->getConfig(), $input))
+            ->setMinimalUpdate($minimalChanges)
         ;
 
         // if no lock is present, we do not do a partial update as

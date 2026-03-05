@@ -1,11 +1,15 @@
-Composer - Dependency Management for PHP
-========================================
+<p align="center">
+    <a href="https://getcomposer.org">
+        <img src="https://getcomposer.org/img/logo-composer-transparent.png" alt="Composer">
+    </a>
+</p>
+<h1 align="center">Dependency Management for PHP</h1>
 
 Composer helps you declare, manage, and install dependencies of PHP projects.
 
 See [https://getcomposer.org/](https://getcomposer.org/) for more information and documentation.
 
-[![Continuous Integration](https://github.com/composer/composer/workflows/Continuous%20Integration/badge.svg?branch=main)](https://github.com/composer/composer/actions)
+[![Continuous Integration](https://github.com/composer/composer/actions/workflows/continuous-integration.yml/badge.svg?branch=main)](https://github.com/composer/composer/actions/workflows/continuous-integration.yml?query=branch%3Amain)
 
 Installation / Usage
 --------------------
@@ -17,7 +21,9 @@ For usage, see [the documentation](https://getcomposer.org/doc/).
 Packages
 --------
 
-Find packages on [Packagist](https://packagist.org).
+Find public packages on [Packagist.org](https://packagist.org).
+
+For private package hosting take a look at [Private Packagist](https://packagist.com).
 
 Community
 ---------
@@ -34,7 +40,33 @@ By participating in this project and its community you agree to abide by those t
 Requirements
 ------------
 
-PHP 5.3.2 or above (at least 5.3.4 recommended to avoid potential bugs)
+#### Latest Composer
+
+PHP 7.2.5 or above for the latest version.
+
+#### Composer 2.2 LTS (Long Term Support)
+
+PHP versions 5.3.2 - 8.1 are still supported via the LTS releases of Composer (2.2.x). If you
+run the installer or the `self-update` command the appropriate Composer version for your PHP
+should be automatically selected.
+
+#### Binary dependencies
+
+- `unzip` (or `7z`/`7zz`)
+- `gzip`
+- `tar`
+- `unrar`
+- `xz`
+- Git (`git`)
+- Mercurial (`hg`)
+- Fossil (`fossil`)
+- Perforce (`p4`)
+- Subversion (`svn`)
+
+The need for these binary dependencies may vary depending on individual use cases. For most users,
+only 2 dependencies are essential for Composer: `unzip` (or `7z`/`7zz`), and `git`. If the
+[`ext-zip`](https://www.php.net/manual/en/zip.installation.php) extension is available, only `git`
+is needed, but this is not recommended.
 
 Authors
 -------

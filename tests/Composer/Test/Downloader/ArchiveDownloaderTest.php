@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -19,7 +19,7 @@ class ArchiveDownloaderTest extends TestCase
     /** @var \Composer\Config&\PHPUnit\Framework\MockObject\MockObject */
     protected $config;
 
-    public function testGetFileName()
+    public function testGetFileName(): void
     {
         $packageMock = $this->getMockBuilder('Composer\Package\PackageInterface')->getMock();
         $packageMock->expects($this->any())
@@ -29,14 +29,14 @@ class ArchiveDownloaderTest extends TestCase
 
         $downloader = $this->getArchiveDownloaderMock();
         $method = new \ReflectionMethod($downloader, 'getFileName');
-        $method->setAccessible(true);
+        (\PHP_VERSION_ID < 80100) and $method->setAccessible(true);
 
         $first = $method->invoke($downloader, $packageMock, '/path');
-        $this->assertMatchesRegularExpression('#/composer/tmp-[a-z0-9]+\.js#', $first);
-        $this->assertSame($first, $method->invoke($downloader, $packageMock, '/path'));
+        self::assertSame($first, $method->invoke($downloader, $packageMock, '/path'));
+        self::assertMatchesRegularExpression('#/composer/tmp-[a-z0-9]+\.js#', $first);
     }
 
-    public function testProcessUrl()
+    public function testProcessUrl(): void
     {
         if (!extension_loaded('openssl')) {
             $this->markTestSkipped('Requires openssl');
@@ -44,15 +44,15 @@ class ArchiveDownloaderTest extends TestCase
 
         $downloader = $this->getArchiveDownloaderMock();
         $method = new \ReflectionMethod($downloader, 'processUrl');
-        $method->setAccessible(true);
+        (\PHP_VERSION_ID < 80100) and $method->setAccessible(true);
 
         $expected = 'https://github.com/composer/composer/zipball/master';
         $url = $method->invoke($downloader, $this->getMockBuilder('Composer\Package\PackageInterface')->getMock(), $expected);
 
-        $this->assertEquals($expected, $url);
+        self::assertEquals($expected, $url);
     }
 
-    public function testProcessUrl2()
+    public function testProcessUrl2(): void
     {
         if (!extension_loaded('openssl')) {
             $this->markTestSkipped('Requires openssl');
@@ -60,15 +60,15 @@ class ArchiveDownloaderTest extends TestCase
 
         $downloader = $this->getArchiveDownloaderMock();
         $method = new \ReflectionMethod($downloader, 'processUrl');
-        $method->setAccessible(true);
+        (\PHP_VERSION_ID < 80100) and $method->setAccessible(true);
 
         $expected = 'https://github.com/composer/composer/archive/master.tar.gz';
         $url = $method->invoke($downloader, $this->getMockBuilder('Composer\Package\PackageInterface')->getMock(), $expected);
 
-        $this->assertEquals($expected, $url);
+        self::assertEquals($expected, $url);
     }
 
-    public function testProcessUrl3()
+    public function testProcessUrl3(): void
     {
         if (!extension_loaded('openssl')) {
             $this->markTestSkipped('Requires openssl');
@@ -76,19 +76,18 @@ class ArchiveDownloaderTest extends TestCase
 
         $downloader = $this->getArchiveDownloaderMock();
         $method = new \ReflectionMethod($downloader, 'processUrl');
-        $method->setAccessible(true);
+        (\PHP_VERSION_ID < 80100) and $method->setAccessible(true);
 
         $expected = 'https://api.github.com/repos/composer/composer/zipball/master';
         $url = $method->invoke($downloader, $this->getMockBuilder('Composer\Package\PackageInterface')->getMock(), $expected);
 
-        $this->assertEquals($expected, $url);
+        self::assertEquals($expected, $url);
     }
 
     /**
      * @dataProvider provideUrls
-     * @param string $url
      */
-    public function testProcessUrlRewriteDist($url)
+    public function testProcessUrlRewriteDist(string $url): void
     {
         if (!extension_loaded('openssl')) {
             $this->markTestSkipped('Requires openssl');
@@ -96,7 +95,7 @@ class ArchiveDownloaderTest extends TestCase
 
         $downloader = $this->getArchiveDownloaderMock();
         $method = new \ReflectionMethod($downloader, 'processUrl');
-        $method->setAccessible(true);
+        (\PHP_VERSION_ID < 80100) and $method->setAccessible(true);
 
         $type = strpos($url, 'tar') ? 'tar' : 'zip';
         $expected = 'https://api.github.com/repos/composer/composer/'.$type.'ball/ref';
@@ -107,27 +106,25 @@ class ArchiveDownloaderTest extends TestCase
             ->will($this->returnValue('ref'));
         $url = $method->invoke($downloader, $package, $url);
 
-        $this->assertEquals($expected, $url);
+        self::assertEquals($expected, $url);
     }
 
-    public function provideUrls()
+    public static function provideUrls(): array
     {
-        return array(
-            array('https://api.github.com/repos/composer/composer/zipball/master'),
-            array('https://api.github.com/repos/composer/composer/tarball/master'),
-            array('https://github.com/composer/composer/zipball/master'),
-            array('https://www.github.com/composer/composer/tarball/master'),
-            array('https://github.com/composer/composer/archive/master.zip'),
-            array('https://github.com/composer/composer/archive/master.tar.gz'),
-        );
+        return [
+            ['https://api.github.com/repos/composer/composer/zipball/master'],
+            ['https://api.github.com/repos/composer/composer/tarball/master'],
+            ['https://github.com/composer/composer/zipball/master'],
+            ['https://www.github.com/composer/composer/tarball/master'],
+            ['https://github.com/composer/composer/archive/master.zip'],
+            ['https://github.com/composer/composer/archive/master.tar.gz'],
+        ];
     }
 
     /**
      * @dataProvider provideBitbucketUrls
-     * @param string $url
-     * @param string $extension
      */
-    public function testProcessUrlRewriteBitbucketDist($url, $extension)
+    public function testProcessUrlRewriteBitbucketDist(string $url, string $extension): void
     {
         if (!extension_loaded('openssl')) {
             $this->markTestSkipped('Requires openssl');
@@ -135,7 +132,7 @@ class ArchiveDownloaderTest extends TestCase
 
         $downloader = $this->getArchiveDownloaderMock();
         $method = new \ReflectionMethod($downloader, 'processUrl');
-        $method->setAccessible(true);
+        (\PHP_VERSION_ID < 80100) and $method->setAccessible(true);
 
         $url .= '.' . $extension;
         $expected = 'https://bitbucket.org/davereid/drush-virtualhost/get/ref.' . $extension;
@@ -146,16 +143,16 @@ class ArchiveDownloaderTest extends TestCase
             ->will($this->returnValue('ref'));
         $url = $method->invoke($downloader, $package, $url);
 
-        $this->assertEquals($expected, $url);
+        self::assertEquals($expected, $url);
     }
 
-    public function provideBitbucketUrls()
+    public static function provideBitbucketUrls(): array
     {
-        return array(
-            array('https://bitbucket.org/davereid/drush-virtualhost/get/77ca490c26ac818e024d1138aa8bd3677d1ef21f', 'zip'),
-            array('https://bitbucket.org/davereid/drush-virtualhost/get/master', 'tar.gz'),
-            array('https://bitbucket.org/davereid/drush-virtualhost/get/v1.0', 'tar.bz2'),
-        );
+        return [
+            ['https://bitbucket.org/davereid/drush-virtualhost/get/77ca490c26ac818e024d1138aa8bd3677d1ef21f', 'zip'],
+            ['https://bitbucket.org/davereid/drush-virtualhost/get/master', 'tar.gz'],
+            ['https://bitbucket.org/davereid/drush-virtualhost/get/v1.0', 'tar.bz2'],
+        ];
     }
 
     /**
@@ -165,11 +162,11 @@ class ArchiveDownloaderTest extends TestCase
     {
         return $this->getMockForAbstractClass(
             'Composer\Downloader\ArchiveDownloader',
-            array(
+            [
                 $io = $this->getMockBuilder('Composer\IO\IOInterface')->getMock(),
                 $this->config = $this->getMockBuilder('Composer\Config')->getMock(),
                 new \Composer\Util\HttpDownloader($io, $this->config),
-            )
+            ]
         );
     }
 }

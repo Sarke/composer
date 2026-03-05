@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -32,82 +32,69 @@ class GitTest extends TestCase
     /** @var Filesystem&\PHPUnit\Framework\MockObject\MockObject */
     private $fs;
 
-    protected function setUp()
+    protected function setUp(): void
     {
         $this->io = $this->getMockBuilder('Composer\IO\IOInterface')->getMock();
         $this->config = $this->getMockBuilder('Composer\Config')->disableOriginalConstructor()->getMock();
-        $this->process = new ProcessExecutorMock;
+        $this->process = $this->getProcessExecutorMock();
         $this->fs = $this->getMockBuilder('Composer\Util\Filesystem')->disableOriginalConstructor()->getMock();
         $this->git = new Git($this->io, $this->config, $this->process, $this->fs);
     }
 
     /**
      * @dataProvider publicGithubNoCredentialsProvider
-     *
-     * @param string $protocol
-     * @param string $expectedUrl
      */
-    public function testRunCommandPublicGitHubRepositoryNotInitialClone($protocol, $expectedUrl)
+    public function testRunCommandPublicGitHubRepositoryNotInitialClone(string $protocol, string $expectedUrl): void
     {
-        $that = $this;
-        $commandCallable = function ($url) use ($that, $expectedUrl) {
-            $that->assertSame($expectedUrl, $url);
+        $commandCallable = static function ($url) use ($expectedUrl): string {
+            self::assertSame($expectedUrl, $url);
 
             return 'git command';
         };
 
         $this->mockConfig($protocol);
 
-        $this->process->expects(array('git command'), true);
+        $this->process->expects(['git command'], true);
 
+        // @phpstan-ignore method.deprecated
         $this->git->runCommand($commandCallable, 'https://github.com/acme/repo', null, true);
-
-        $this->process->assertComplete($this);
     }
 
-    public function publicGithubNoCredentialsProvider()
+    public static function publicGithubNoCredentialsProvider(): array
     {
-        return array(
-            array('ssh', 'git@github.com:acme/repo'),
-            array('https', 'https://github.com/acme/repo'),
-        );
+        return [
+            ['ssh', 'git@github.com:acme/repo'],
+            ['https', 'https://github.com/acme/repo'],
+        ];
     }
 
-    public function testRunCommandPrivateGitHubRepositoryNotInitialCloneNotInteractiveWithoutAuthentication()
+    public function testRunCommandPrivateGitHubRepositoryNotInitialCloneNotInteractiveWithoutAuthentication(): void
     {
-        $this->setExpectedException('RuntimeException');
+        self::expectException('RuntimeException');
 
-        $that = $this;
-        $commandCallable = function ($url) use ($that) {
-            $that->assertSame('https://github.com/acme/repo', $url);
+        $commandCallable = static function ($url): string {
+            self::assertSame('https://github.com/acme/repo', $url);
 
             return 'git command';
         };
 
         $this->mockConfig('https');
 
-        $this->process->expects(array(
-            array('cmd' => 'git command', 'return' => 1),
-            array('cmd' => 'git --version', 'return' => 0),
-        ), true);
+        $this->process->expects([
+            ['cmd' => 'git command', 'return' => 1],
+            ['cmd' => ['git', '--version'], 'return' => 0],
+        ], true);
 
+        // @phpstan-ignore method.deprecated
         $this->git->runCommand($commandCallable, 'https://github.com/acme/repo', null, true);
-
-        $this->process->assertComplete($this);
     }
 
     /**
      * @dataProvider privateGithubWithCredentialsProvider
-     *
-     * @param string $gitUrl
-     * @param string $protocol
-     * @param string $gitHubToken
-     * @param string $expectedUrl
-     * @param int    $expectedFailuresBeforeSuccess
      */
-    public function testRunCommandPrivateGitHubRepositoryNotInitialCloneNotInteractiveWithAuthentication($gitUrl, $protocol, $gitHubToken, $expectedUrl, $expectedFailuresBeforeSuccess)
+    public function testRunCommandPrivateGitHubRepositoryNotInitialCloneNotInteractiveWithAuthentication(string $gitUrl, string $protocol, string $gitHubToken, string $expectedUrl, int $expectedFailuresBeforeSuccess): void
     {
-        $commandCallable = function ($url) use ($expectedUrl) {
+        $commandCallable = static function ($url) use ($expectedUrl): string {
             if ($url !== $expectedUrl) {
                 return 'git command failing';
             }
@@ -117,8 +104,8 @@ class GitTest extends TestCase
 
         $this->mockConfig($protocol);
 
-        $expectedCalls = array_fill(0, $expectedFailuresBeforeSuccess, array('cmd' => 'git command failing', 'return' => 1));
-        $expectedCalls[] = array('cmd' => 'git command ok', 'return' => 0);
+        $expectedCalls = array_fill(0, $expectedFailuresBeforeSuccess, ['cmd' => 'git command failing', 'return' => 1]);
+        $expectedCalls[] = ['cmd' => 'git command ok', 'return' => 0];
 
         $this->process->expects($expectedCalls, true);
 
@@ -136,33 +123,186 @@ class GitTest extends TestCase
             ->expects($this->atLeastOnce())
             ->method('getAuthentication')
             ->with($this->equalTo('github.com'))
-            ->willReturn(array('username' => 'token', 'password' => $gitHubToken));
+            ->willReturn(['username' => 'token', 'password' => $gitHubToken]);
 
+        // @phpstan-ignore method.deprecated
         $this->git->runCommand($commandCallable, $gitUrl, null, true);
-
-        $this->process->assertComplete($this);
-    }
-
-    public function privateGithubWithCredentialsProvider()
-    {
-        return array(
-            array('git@github.com:acme/repo.git', 'ssh', 'MY_GITHUB_TOKEN', 'https://token:MY_GITHUB_TOKEN@github.com/acme/repo.git', 1),
-            array('https://github.com/acme/repo', 'https', 'MY_GITHUB_TOKEN', 'https://token:MY_GITHUB_TOKEN@github.com/acme/repo.git', 2),
-        );
     }
 
     /**
-     * @param string $protocol
-     *
-     * @return void
+     * @dataProvider privateBitbucketWithCredentialsProvider
      */
-    private function mockConfig($protocol)
+    public function testRunCommandPrivateBitbucketRepositoryNotInitialCloneNotInteractiveWithAuthentication(string $gitUrl, ?string $bitbucketToken, string $expectedUrl, int $expectedFailuresBeforeSuccess, int $bitbucket_git_auth_calls = 0): void
+    {
+        $commandCallable = static function ($url) use ($expectedUrl): string {
+            if ($url !== $expectedUrl) {
+                return 'git command failing';
+            }
+
+            return 'git command ok';
+        };
+
+        $this->config
+            ->method('get')
+            ->willReturnMap([
+                ['gitlab-domains', 0, ['gitlab.com']],
+                ['github-domains', 0, ['github.com']],
+            ]);
+
+        $expectedCalls = array_fill(0, $expectedFailuresBeforeSuccess, ['cmd' => 'git command failing', 'return' => 1]);
+        if ($bitbucket_git_auth_calls > 0) {
+            // When we are testing what happens without auth saved, and URLs
+            // with https, there will also be an attempt to find the token in
+            // the git config for the folder and repo, locally.
+            $additional_calls = array_fill(0, $bitbucket_git_auth_calls, ['cmd' => ['git', 'config', 'bitbucket.accesstoken'], 'return' => 1]);
+            foreach ($additional_calls as $call) {
+                $expectedCalls[] = $call;
+            }
+        }
+        $expectedCalls[] = ['cmd' => 'git command ok', 'return' => 0];
+
+        $this->process->expects($expectedCalls, true);
+
+        $this->io
+            ->method('isInteractive')
+            ->willReturn(false);
+
+        if (null !== $bitbucketToken) {
+            $this->io
+                ->expects($this->atLeastOnce())
+                ->method('hasAuthentication')
+                ->with($this->equalTo('bitbucket.org'))
+                ->willReturn(true);
+            $this->io
+                ->expects($this->atLeastOnce())
+                ->method('getAuthentication')
+                ->with($this->equalTo('bitbucket.org'))
+                ->willReturn(['username' => 'token', 'password' => $bitbucketToken]);
+        }
+        // @phpstan-ignore method.deprecated
+        $this->git->runCommand($commandCallable, $gitUrl, null, true);
+    }
+
+    /**
+     * @dataProvider privateBitbucketWithOauthProvider
+     *
+     * @param array{'username': string, 'password': string}[] $initial_config
+     */
+    public function testRunCommandPrivateBitbucketRepositoryNotInitialCloneInteractiveWithOauth(string $gitUrl, string $expectedUrl, array $initial_config = []): void
+    {
+        $commandCallable = static function ($url) use ($expectedUrl): string {
+            if ($url !== $expectedUrl) {
+                return 'git command failing';
+            }
+
+            return 'git command ok';
+        };
+
+        $expectedCalls = [];
+        $expectedCalls[] = ['cmd' => 'git command failing', 'return' => 1];
+        if (count($initial_config) > 0) {
+            $expectedCalls[] = ['cmd' => 'git command failing', 'return' => 1];
+        } else {
+            $expectedCalls[] = ['cmd' => ['git', 'config', 'bitbucket.accesstoken'], 'return' => 1];
+        }
+        $expectedCalls[] = ['cmd' => 'git command ok', 'return' => 0];
+        $this->process->expects($expectedCalls, true);
+
+        $this->config
+            ->method('get')
+            ->willReturnMap([
+                ['gitlab-domains', 0, ['gitlab.com']],
+                ['github-domains', 0, ['github.com']],
+            ]);
+
+        $this->io
+            ->method('isInteractive')
+            ->willReturn(true);
+
+        $this->io
+            ->method('askConfirmation')
+            ->willReturnCallback(static function () {
+                return true;
+            });
+        $this->io->method('askAndHideAnswer')
+            ->willReturnCallback(static function ($question) {
+                switch ($question) {
+                    case 'Consumer Key (hidden): ':
+                        return 'my-consumer-key';
+                    case 'Consumer Secret (hidden): ':
+                        return 'my-consumer-secret';
+                }
+
+                return '';
+            });
+
+        $this->io
+            ->method('hasAuthentication')
+            ->with($this->equalTo('bitbucket.org'))
+            ->willReturnCallback(static function ($repositoryName) use (&$initial_config) {
+                return isset($initial_config[$repositoryName]);
+            });
+        $this->io
+            ->method('setAuthentication')
+            ->willReturnCallback(static function (string $repositoryName, string $username, ?string $password = null) use (&$initial_config) {
+                $initial_config[$repositoryName] = ['username' => $username, 'password' => $password];
+            });
+        $this->io
+            ->method('getAuthentication')
+            ->willReturnCallback(static function (string $repositoryName) use (&$initial_config) {
+                if (isset($initial_config[$repositoryName])) {
+                    return $initial_config[$repositoryName];
+                }
+
+                return ['username' => null, 'password' => null];
+            });
+        $downloader_mock = $this->getHttpDownloaderMock();
+        $downloader_mock->expects([
+            ['url' => 'https://bitbucket.org/site/oauth2/access_token', 'status' => 200, 'body' => '{"expires_in": 600, "access_token": "my-access-token"}'],
+        ]);
+        $this->git->setHttpDownloader($downloader_mock);
+        // @phpstan-ignore method.deprecated
+        $this->git->runCommand($commandCallable, $gitUrl, null, true);
+    }
+
+    public static function privateBitbucketWithOauthProvider(): array
+    {
+        return [
+            ['git@bitbucket.org:acme/repo.git', 'https://x-token-auth:my-access-token@bitbucket.org/acme/repo.git'],
+            ['https://bitbucket.org/acme/repo.git', 'https://x-token-auth:my-access-token@bitbucket.org/acme/repo.git'],
+            ['https://bitbucket.org/acme/repo', 'https://x-token-auth:my-access-token@bitbucket.org/acme/repo.git'],
+            ['git@bitbucket.org:acme/repo.git', 'https://x-token-auth:my-access-token@bitbucket.org/acme/repo.git', ['bitbucket.org' => ['username' => 'someuseralsoswappedfortoken', 'password' => 'little green men']]],
+        ];
+    }
+
+    public static function privateBitbucketWithCredentialsProvider(): array
+    {
+        return [
+            ['git@bitbucket.org:acme/repo.git', 'MY_BITBUCKET_TOKEN', 'https://token:MY_BITBUCKET_TOKEN@bitbucket.org/acme/repo.git', 1],
+            ['https://bitbucket.org/acme/repo', 'MY_BITBUCKET_TOKEN', 'https://token:MY_BITBUCKET_TOKEN@bitbucket.org/acme/repo.git', 1],
+            ['https://bitbucket.org/acme/repo.git', 'MY_BITBUCKET_TOKEN', 'https://token:MY_BITBUCKET_TOKEN@bitbucket.org/acme/repo.git', 1],
+            ['git@bitbucket.org:acme/repo.git', null, 'git@bitbucket.org:acme/repo.git', 0],
+            ['https://bitbucket.org/acme/repo', null, 'git@bitbucket.org:acme/repo.git', 1, 1],
+            ['https://bitbucket.org/acme/repo.git', null, 'git@bitbucket.org:acme/repo.git', 1, 1],
+            ['https://bitbucket.org/acme/repo.git', 'ATAT_BITBUCKET_API_TOKEN', 'https://x-bitbucket-api-token-auth:ATAT_BITBUCKET_API_TOKEN@bitbucket.org/acme/repo.git', 1],
+        ];
+    }
+
+    public static function privateGithubWithCredentialsProvider(): array
+    {
+        return [
+            ['git@github.com:acme/repo.git', 'ssh', 'MY_GITHUB_TOKEN', 'https://token:MY_GITHUB_TOKEN@github.com/acme/repo.git', 1],
+            ['https://github.com/acme/repo', 'https', 'MY_GITHUB_TOKEN', 'https://token:MY_GITHUB_TOKEN@github.com/acme/repo.git', 2],
+        ];
+    }
+
+    private function mockConfig(string $protocol): void
     {
         $this->config
             ->method('get')
-            ->willReturnMap(array(
-                array('github-domains', 0, array('github.com')),
-                array('github-protocols', 0, array($protocol)),
-            ));
+            ->willReturnMap([
+                ['github-domains', 0, ['github.com']],
+                ['github-protocols', 0, [$protocol]],
+            ]);
     }
 }

@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 /*
  * This file is part of Composer.
@@ -13,136 +13,85 @@
 namespace Composer\Test;
 
 use Composer\Console\Application;
-use Composer\XdebugHandler\XdebugHandler;
-use Symfony\Component\Console\Output\OutputInterface;
+use Composer\Util\Platform;
+use Symfony\Component\Console\Input\ArrayInput;
+use Symfony\Component\Console\Output\BufferedOutput;
 
 class ApplicationTest extends TestCase
 {
-    public function tearDown()
+    protected function tearDown(): void
     {
         parent::tearDown();
 
-        putenv('COMPOSER_NO_INTERACTION');
+        Platform::clearEnv('COMPOSER_DISABLE_XDEBUG_WARN');
     }
 
-    public function testDevWarning()
+    protected function setUp(): void
     {
-        $application = new Application;
+        parent::setUp();
 
-        $inputMock = $this->getMockBuilder('Symfony\Component\Console\Input\InputInterface')->getMock();
-        $outputMock = $this->getMockBuilder('Symfony\Component\Console\Output\OutputInterface')->getMock();
-
-        putenv('COMPOSER_NO_INTERACTION=1');
-
-        $index = 0;
-        $inputMock->expects($this->at($index++))
-            ->method('hasParameterOption')
-            ->with($this->equalTo('--no-plugins'))
-            ->will($this->returnValue(true));
-
-        $inputMock->expects($this->at($index++))
-            ->method('setInteractive')
-            ->with($this->equalTo(false));
-
-        $inputMock->expects($this->at($index++))
-            ->method('hasParameterOption')
-            ->with($this->equalTo('--no-cache'))
-            ->will($this->returnValue(false));
-
-        $inputMock->expects($this->at($index++))
-            ->method('getParameterOption')
-            ->with($this->equalTo(array('--working-dir', '-d')))
-            ->will($this->returnValue(false));
-
-        $inputMock->expects($this->any())
-            ->method('getFirstArgument')
-            ->will($this->returnValue('show'));
-
-        $index = 0;
-        $outputMock->expects($this->at($index++))
-            ->method("write");
-
-        if (XdebugHandler::isXdebugActive()) {
-            $outputMock->expects($this->at($index++))
-                ->method("getVerbosity")
-                ->willReturn(OutputInterface::VERBOSITY_NORMAL);
-
-            $outputMock->expects($this->at($index++))
-                ->method("write")
-                ->with($this->equalTo('<warning>Composer is operating slower than normal because you have Xdebug enabled. See https://getcomposer.org/xdebug</warning>'));
-        }
-
-        $outputMock->expects($this->at($index++))
-            ->method("getVerbosity")
-            ->willReturn(OutputInterface::VERBOSITY_NORMAL);
-
-        $outputMock->expects($this->at($index++))
-            ->method("write")
-            ->with($this->equalTo(sprintf('<warning>Warning: This development build of Composer is over 60 days old. It is recommended to update it by running "%s self-update" to get the latest version.</warning>', $_SERVER['PHP_SELF'])));
-
-        if (!defined('COMPOSER_DEV_WARNING_TIME')) {
-            define('COMPOSER_DEV_WARNING_TIME', time() - 1);
-        }
-
-        $application->doRun($inputMock, $outputMock);
+        Platform::putEnv('COMPOSER_DISABLE_XDEBUG_WARN', '1');
     }
 
     /**
-     * @param  string $command
-     * @return void
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
      */
-    public function ensureNoDevWarning($command)
+    public function testDevWarning(): void
     {
         $application = new Application;
-
-        $application->add(new \Composer\Command\SelfUpdateCommand);
-
-        $inputMock = $this->getMockBuilder('Symfony\Component\Console\Input\InputInterface')->getMock();
-        $outputMock = $this->getMockBuilder('Symfony\Component\Console\Output\OutputInterface')->getMock();
-
-        putenv('COMPOSER_NO_INTERACTION=1');
-
-        $index = 0;
-        $inputMock->expects($this->at($index++))
-            ->method('hasParameterOption')
-            ->with($this->equalTo('--no-plugins'))
-            ->will($this->returnValue(true));
-
-        $inputMock->expects($this->at($index++))
-            ->method('setInteractive')
-            ->with($this->equalTo(false));
-
-        $inputMock->expects($this->at($index++))
-            ->method('hasParameterOption')
-            ->with($this->equalTo('--no-cache'))
-            ->will($this->returnValue(false));
-
-        $inputMock->expects($this->at($index++))
-            ->method('getParameterOption')
-            ->with($this->equalTo(array('--working-dir', '-d')))
-            ->will($this->returnValue(false));
-
-        $inputMock->expects($this->any())
-            ->method('getFirstArgument')
-            ->will($this->returnValue('show'));
-
-        $outputMock->expects($this->never())
-            ->method("writeln");
 
         if (!defined('COMPOSER_DEV_WARNING_TIME')) {
             define('COMPOSER_DEV_WARNING_TIME', time() - 1);
         }
 
-        $application->doRun($inputMock, $outputMock);
+        $output = new BufferedOutput();
+        $application->doRun(new ArrayInput(['command' => 'about']), $output);
+
+        $expectedOutput = sprintf('<warning>Warning: This development build of Composer is over 60 days old. It is recommended to update it by running "%s self-update" to get the latest version.</warning>', $_SERVER['PHP_SELF']).PHP_EOL;
+        self::assertStringContainsString($expectedOutput, $output->fetch());
     }
 
-    public function testDevWarningPrevented()
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testDevWarningSuppressedForSelfUpdate(): void
     {
-        $this->ensureNoDevWarning('self-update');
+        if (Platform::isWindows()) {
+            $this->markTestSkipped('Does not run on windows');
+        }
+
+        $application = new Application;
+        // Compatibility layer for symfony/console <7.4
+        // @phpstan-ignore method.notFound, function.alreadyNarrowedType
+        method_exists($application, 'addCommand') ? $application->addCommand(new \Composer\Command\SelfUpdateCommand) : $application->add(new \Composer\Command\SelfUpdateCommand);
+
+        if (!defined('COMPOSER_DEV_WARNING_TIME')) {
+            define('COMPOSER_DEV_WARNING_TIME', time() - 1);
+        }
+
+        $output = new BufferedOutput();
+        $application->doRun(new ArrayInput(['command' => 'self-update']), $output);
+
+        self::assertSame(
+            'This instance of Composer does not have the self-update command.'.PHP_EOL.
+            'This could be due to a number of reasons, such as Composer being installed as a system package on your OS, or Composer being installed as a package in the current project.'.PHP_EOL,
+            $output->fetch()
+        );
     }
 
-    public function testDevWarningPreventedAlias()
+    /**
+     * @runInSeparateProcess
+     * @see https://github.com/composer/composer/issues/12107
+     */
+    public function testProcessIsolationWorksMultipleTimes(): void
     {
-        $this->ensureNoDevWarning('self-up');
+        $application = new Application;
+        // Compatibility layer for symfony/console <7.4
+        // @phpstan-ignore method.notFound, function.alreadyNarrowedType
+        method_exists($application, 'addCommand') ? $application->addCommand(new \Composer\Command\AboutCommand) : $application->add(new \Composer\Command\AboutCommand);
+        self::assertSame(0, $application->doRun(new ArrayInput(['command' => 'about']), new BufferedOutput()));
+        self::assertSame(0, $application->doRun(new ArrayInput(['command' => 'about']), new BufferedOutput()));
     }
 }
